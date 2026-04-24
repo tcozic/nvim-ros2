@@ -20,6 +20,17 @@ function M.set_sync_extmark(bufnr, row, anchor_text, range, state)
     { row, -1 },
     { details = true }
   )
+
+  -- Preserve the original File value prefix if anchor is omitted
+  if not anchor_text then
+    if #marks > 0 and marks[1][4].virt_text and marks[1][4].virt_text[1] then
+      local old_text = marks[1][4].virt_text[1][1]
+      anchor_text = old_text:match("^(%s*#%s*%[.-%])") or ""
+    else
+      anchor_text = ""
+    end
+  end
+
   vim.api.nvim_buf_set_extmark(bufnr, ns_id, row, 0, {
     id = #marks > 0 and marks[1][1] or nil,
     virt_text = { { anchor_text .. c.text .. (range or ""), c.hl } },
@@ -30,7 +41,6 @@ function M.set_sync_extmark(bufnr, row, anchor_text, range, state)
   })
 end
 
---- Exposes buffer health to external statuslines.
 --- Exposes buffer health to external statuslines.
 function M.tuner_status(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
@@ -50,7 +60,13 @@ function M.tuner_status(bufnr)
     display_name = "[File: " .. display_name .. "]"
   end
 
-  local marks = vim.api.nvim_buf_get_extmarks(bufnr, ns_id, 0, -1, { details = true })
+  local marks = vim.api.nvim_buf_get_extmarks(
+    bufnr,
+    ns_id,
+    { 0, 0 },
+    { -1, -1 },
+    { details = true }
+  )
   local synced, unused, offline = 0, 0, 0
   for _, mark in ipairs(marks) do
     local sign = mark[4].sign_text

@@ -97,7 +97,7 @@ function M.attach_node(target_node)
     if #candidates == 0 then
       M.open_synthetic_proxy(target_node)
     elseif #candidates == 1 then
-      vim.cmd("tabnew " .. candidates[1].path)
+      vim.cmd("edit " .. candidates[1].path)
       vim.schedule(M.start_session)
     else
       vim.ui.select(candidates, {
@@ -107,7 +107,7 @@ function M.attach_node(target_node)
         end,
       }, function(choice)
         if choice then
-          vim.cmd("edit " .. choice.path)
+          vim.cmd("edit " .. candidates[1].path)
           vim.schedule(M.start_session)
         end
       end)
@@ -245,6 +245,7 @@ function M.setup_crucible_autocmds(scratch, orig_buf, orig_win)
         return
       end
 
+      -- Check if original buffer is currently visible
       local target_win = nil
       for _, win in ipairs(vim.api.nvim_list_wins()) do
         if vim.api.nvim_win_get_buf(win) == orig_buf then
@@ -253,22 +254,25 @@ function M.setup_crucible_autocmds(scratch, orig_buf, orig_win)
         end
       end
 
+      -- If hidden (because of 'hide' mode), forcefully split to reveal it side-by-side
       if not target_win then
         vim.cmd("vsplit")
         vim.api.nvim_set_current_buf(orig_buf)
         target_win = vim.api.nvim_get_current_win()
-        vim.cmd("wincmd p")
+        vim.cmd("wincmd p") -- Return focus to the scratch buffer
       end
 
       vim.b[scratch].crucible_active = true
       vim.api.nvim_buf_clear_namespace(scratch, vim.api.nvim_create_namespace("ros_tuner"), 0, -1)
 
+      -- Enter Vimdiff
       vim.cmd("diffthis")
       vim.opt_local.foldenable = false
       vim.api.nvim_set_current_win(target_win)
       vim.cmd("diffthis")
       vim.opt_local.foldenable = false
 
+      -- Ensure focus is returned to the scratch buffer
       for _, w in ipairs(vim.api.nvim_list_wins()) do
         if vim.api.nvim_win_get_buf(w) == scratch then
           vim.api.nvim_set_current_win(w)
@@ -475,7 +479,7 @@ function M.attach_to_buffer(bufnr)
       if fqn and param and val ~= "unknown" and val ~= state.last_val then
         RosApi.set_param(fqn, param, type, val, function()
           state.last_val = val
-          UI.set_sync_extmark(bufnr, state.last_row - 1, "  # [Live: " .. val .. "]", nil, "synced")
+          UI.set_sync_extmark(bufnr, state.last_row - 1, nil, nil, "synced")
         end)
       end
     end,
@@ -514,7 +518,7 @@ function M.attach_to_buffer(bufnr)
               UI.set_sync_extmark(
                 bufnr,
                 captured_row,
-                "  # [Live: " .. val .. "]",
+                nil,
                 " | Range: " .. param_metadata_cache[cache_key].range,
                 "synced"
               )
@@ -524,13 +528,7 @@ function M.attach_to_buffer(bufnr)
             RosApi.get_param_metadata(fqn, param, function(meta)
               param_metadata_cache[cache_key] = meta
               if meta.range then
-                UI.set_sync_extmark(
-                  bufnr,
-                  captured_row,
-                  "  # [Live: " .. val .. "]",
-                  " | Range: " .. meta.range,
-                  "synced"
-                )
+                UI.set_sync_extmark(bufnr, captured_row, nil, " | Range: " .. meta.range, "synced")
               end
             end)
           end
