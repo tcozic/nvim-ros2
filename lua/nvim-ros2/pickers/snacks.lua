@@ -1,5 +1,5 @@
 local M = {}
-
+local Utils = require("nvim-ros2.utils")
 local function get_command_output(cmd)
   if vim.fn.executable("ros2") ~= 1 then
     vim.notify("ros2 not found", vim.log.levels.ERROR)
@@ -50,8 +50,11 @@ local function ros_picker(opts)
         end)
       end)
     end,
-    confirm = function()
-      -- No-op as per original requirement
+    confirm = function(picker, item)
+      picker:close()
+      if opts.on_select and item then
+        opts.on_select(item.text) -- Return node name to caller
+      end
     end,
   })
 end
@@ -92,14 +95,15 @@ function M.interfaces()
   })
 end
 
-function M.nodes()
-  ros_picker({
+function M.nodes(opts)
+  opts = opts or {}
+  ros_picker(vim.tbl_extend("force", {
     prompt_title = "Active Nodes",
     system_cmd = { "ros2", "node", "list" },
     command = "node",
     mode = "info",
     args = "--include-hidden",
-  })
+  }, opts))
 end
 
 function M.actions()
@@ -141,6 +145,107 @@ function M.topics_echo()
     args = "--once",
     timeout = 3000,
   })
+end
+
+function M.packages()
+  local ws_root = Utils.get_workspace_root(0)
+
+  Snacks.picker.files({
+    title = "ROS 2 Packages",
+    format = "text",
+    cmd = vim.fn.executable("fd") == 1 and "fd" or "find",
+    args = vim.fn.executable("fd") == 1
+        and { "^package.xml$", "--exclude", "build", "--exclude", "install", "--exclude", "log" }
+      or { "-name", "package.xml", "-not", "-path", "*/install/*", "-not", "-path", "*/build/*" },
+
+    transform = function(item)
+      local xml_path = item.file
+      local pkg_dir = vim.fs.dirname(xml_path)
+      local pkg_name = vim.fs.basename(pkg_dir)
+
+      -- Parse XML for actual package name
+      local f = io.open(xml_path, "r")
+      if f then
+        local content = f:read("*a")
+        f:close()
+        pkg_name = content:match("<name>%s*(.-)%s*</name>") or pkg_name
+      end
+
+      item.pkg_dir = pkg_dir
+      item.text = pkg_name .. " 📦"
+      -- Preview the README if it exists
+      for _, v in ipairs({ "/README.md", "/README" }) do
+        if vim.uv.fs_stat(pkg_dir .. v) then
+          item.file = pkg_dir .. v
+          break
+        end
+      end
+      return item
+    end,
+    actions = {
+      confirm = function(picker, item)
+        picker:close()
+        if item and item.pkg_dir then
+          -- Default to Oil if available, else Lexplore
+          if pcall(require, "oil") then
+            require("oil").open(item.pkg_dir)
+          else
+            vim.cmd("Lexplore " .. item.pkg_dir)
+          end
+        end
+      end,
+    },
+  })
+end
+
+function M.sniper(subdir)
+  local pkg = Utils.find_package_root()
+  if not pkg then
+    return
+  end
+  local target = pkg .. "/" .. subdir
+
+  if vim.fn.isdirectory(target) == 0 then
+    vim.fn.mkdir(target, "p")
+    vim.notify("Created missing directory: " .. subdir, vim.log.levels.INFO)
+  end
+
+  local files = vim.split(vim.fn.glob(target .. "/*"), "\n", { trimempty = true })
+  if #files == 1 then
+    vim.cmd("edit " .. files[1])
+  elseif #files > 1 then
+    Snacks.picker.files({ cwd = target, title = subdir .. " Files" })
+  else
+    if pcall(require, "oil") then
+      require("oil").open(target)
+    else
+      vim.cmd("Lexplore " .. target)
+    end
+  end
+end
+
+function M.find_files_package()
+  local pkg = Utils.find_package_root()
+  if pkg then
+    Snacks.picker.files({
+      cwd = pkg,
+      title = "Find in Package: " .. vim.fs.basename(pkg),
+    })
+  else
+    vim.notify("Not inside a ROS 2 package.", vim.log.levels.WARN)
+  end
+end
+
+function M.grep_package()
+  local pkg = Utils.find_package_root()
+  if pkg then
+    Snacks.picker.grep({
+      cwd = pkg,
+      title = "Grep in Package: " .. vim.fs.basename(pkg),
+    })
+  else
+    vim.notify("Not inside a ROS 2 package.", vim.log.levels.WARN)
+  end
 end
 
 return M

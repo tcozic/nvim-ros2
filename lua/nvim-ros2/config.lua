@@ -4,6 +4,7 @@ local defaults = {
   autocmds = true,
   treesitter = true,
   picker = "telescope", -- "telescope", "snacks", "fzf"
+  tuner = true, -- New option
 }
 
 M.options = {}
@@ -18,4 +19,5 @@ function M.setup(opts)
     M.options.picker = "telescope"
   end
 end
+
 return M

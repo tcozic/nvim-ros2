@@ -25,10 +25,10 @@ function M.interfaces()
   end
 end
 
-function M.nodes()
+function M.nodes(opts)
   local picker = M.get_picker()
   if picker then
-    picker.nodes()
+    picker.nodes(opts)
   end
 end
 
@@ -53,10 +53,54 @@ function M.topics_echo()
   end
 end
 
-function M.actions()
+function M.packages()
+  local picker = M.get_picker()
+  if picker then
+    picker.packages()
+  end
+end
+
+function M.sniper(subdir)
+  local picker = M.get_picker()
+  if picker then
+    picker.sniper(subdir)
+  end
+end
+
+function M.actions() -- Ensure this exists for consistency
   local picker = M.get_picker()
   if picker then
     picker.actions()
+  end
+end
+
+function M.find_files_package()
+  local picker = M.get_picker()
+  if picker then
+    picker.find_files_package()
+  end
+end
+
+function M.grep_package()
+  local picker = M.get_picker()
+  if picker then
+    picker.grep_package()
+  end
+end
+
+function M.edit_cmake()
+  local Utils = require("nvim-ros2.utils")
+  local pkg = Utils.find_package_root()
+  if pkg then
+    vim.cmd("edit " .. pkg .. "/CMakeLists.txt")
+  end
+end
+
+function M.edit_package_xml()
+  local Utils = require("nvim-ros2.utils")
+  local pkg = Utils.find_package_root()
+  if pkg then
+    vim.cmd("edit " .. pkg .. "/package.xml")
   end
 end
 
