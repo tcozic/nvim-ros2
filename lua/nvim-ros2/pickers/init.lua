@@ -67,13 +67,6 @@ function M.sniper(subdir)
   end
 end
 
-function M.actions() -- Ensure this exists for consistency
-  local picker = M.get_picker()
-  if picker then
-    picker.actions()
-  end
-end
-
 function M.find_files_package()
   local picker = M.get_picker()
   if picker then
