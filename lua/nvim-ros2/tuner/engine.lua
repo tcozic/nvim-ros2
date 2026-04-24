@@ -1,8 +1,6 @@
 local Utils = require("nvim-ros2.utils")
-local RosApi = require("nvim-ros2.api.ros2")
 local M = {}
 
---- Determines the primitive data type of a Treesitter YAML value node.
 local function get_yaml_value_type(value_node)
   local actual_node = value_node
   while
@@ -34,7 +32,6 @@ local function get_yaml_value_type(value_node)
   return t
 end
 
---- Resolves the parameter name, node namespace, and value under the cursor.
 --- Resolves the parameter name, node namespace, and value under the cursor.
 function M.resolve_parameter_context(bufnr, pos)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
@@ -68,7 +65,6 @@ function M.resolve_parameter_context(bufnr, pos)
     current = current:parent()
   end
 
-  -- RESTORED: Prevent attaching to dictionaries or incomplete paths
   if #path_keys < 2 or value_type == "unknown" or value_type:match("mapping") then
     return nil
   end
@@ -99,7 +95,6 @@ function M.resolve_parameter_context(bufnr, pos)
     value_node and vim.treesitter.get_node_text(value_node, bufnr) or "unknown"
 end
 
---- Recursively structures flat parameter paths into deep Lua dictionaries.
 function M.build_nested_tree(flat_params)
   local tree = {}
   for p_name, p_val in pairs(flat_params) do
@@ -114,7 +109,6 @@ function M.build_nested_tree(flat_params)
   return tree
 end
 
---- Determines the precise line indices to insert missing parameters safely.
 function M.compute_tree_insertions(
   tree,
   start_idx,
@@ -205,7 +199,6 @@ function M.compute_tree_insertions(
   end
 end
 
---- Parses a raw CLI parameter dump into a flattened key-value dictionary.
 function M.parse_ros2_dump(dump_text, active_node)
   local live_params = {}
   local path_stack = {}
@@ -215,6 +208,8 @@ function M.parse_ros2_dump(dump_text, active_node)
       local depth = math.floor(#indent / 2) + 1
       path_stack[depth] = key
       if val ~= "" and val ~= nil then
+        -- RESTORED: Strip inline YAML comments like `1.0 # default`
+        local clean_val = val:match("^(.-)%s+#.*$") or val:match("^(.-)%s*$")
         local full_path = {}
         for i = 2, depth do
           if path_stack[i] ~= "ros__parameters" then
@@ -222,7 +217,7 @@ function M.parse_ros2_dump(dump_text, active_node)
           end
         end
         if #full_path > 0 then
-          live_params[active_node .. ":" .. table.concat(full_path, ".")] = val:match("^(.-)%s*$")
+          live_params[active_node .. ":" .. table.concat(full_path, ".")] = clean_val
         end
       end
     end

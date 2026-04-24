@@ -5,6 +5,7 @@ local defaults = {
   treesitter = true,
   picker = "telescope", -- "telescope", "snacks", "fzf"
   tuner = true, -- New option
+  tuner_match_mode = "smart", -- Options: "smart", "simple", "all"
 }
 
 M.options = {}

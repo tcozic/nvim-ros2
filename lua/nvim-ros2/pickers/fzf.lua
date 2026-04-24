@@ -7,11 +7,31 @@ local function get_command_output(cmd)
   end
   return vim.fn.systemlist(cmd)
 end
-
 local function ros_picker(opts)
   local output = get_command_output(opts.system_cmd)
   if not output then
     return
+  end
+
+  -- Sprint 5+: Build actions table with custom injects
+  local actions = {
+    ["default"] = function(selected)
+      if opts.on_select and selected and #selected > 0 then
+        opts.on_select(selected[1])
+      end
+    end,
+  }
+
+  if opts.custom_actions then
+    for key, def in pairs(opts.custom_actions) do
+      -- Translate Neovim "<C-t>" to fzf-lua "ctrl-t"
+      local fzf_key = key:gsub("<[cC]%-(.)>", "ctrl-%1"):lower()
+      actions[fzf_key] = function(selected)
+        if selected and #selected > 0 then
+          def.callback(selected[1])
+        end
+      end
+    end
   end
 
   local fzf = require("fzf-lua")
@@ -28,16 +48,10 @@ local function ros_picker(opts)
       end
       return vim.fn.systemlist(cmd)
     end,
-    actions = {
-      ["default"] = function(selected)
-        -- Sprint 4: Trigger Tuner callback if provided
-        if opts.on_select and selected and #selected > 0 then
-          opts.on_select(selected[1])
-        end
-      end,
-    },
+    actions = actions,
   })
 end
+
 function M.interfaces()
   local command = { "ros2", "interface", "list" }
   local raw_output = get_command_output(command)
@@ -73,6 +87,51 @@ function M.interfaces()
   })
 end
 
+local function ros_picker(opts)
+  local output = get_command_output(opts.system_cmd)
+  if not output then
+    return
+  end
+
+  -- Sprint 5+: Build actions table with custom injects
+  local actions = {
+    ["default"] = function(selected)
+      if opts.on_select and selected and #selected > 0 then
+        opts.on_select(selected[1])
+      end
+    end,
+  }
+
+  if opts.custom_actions then
+    for key, def in pairs(opts.custom_actions) do
+      -- Translate Neovim "<C-t>" to fzf-lua "ctrl-t"
+      local fzf_key = key:gsub("<[cC]%-(.)>", "ctrl-%1"):lower()
+      actions[fzf_key] = function(selected)
+        if selected and #selected > 0 then
+          def.callback(selected[1])
+        end
+      end
+    end
+  end
+
+  local fzf = require("fzf-lua")
+  fzf.fzf_exec(output, {
+    prompt = opts.prompt_title .. "> ",
+    preview = function(selected)
+      if not selected or #selected == 0 then
+        return {}
+      end
+      local item = selected[1]
+      local cmd = { "ros2", opts.command, opts.mode, item }
+      if opts.args and opts.args ~= "" then
+        table.insert(cmd, opts.args)
+      end
+      return vim.fn.systemlist(cmd)
+    end,
+    actions = actions,
+  })
+end
+
 function M.nodes(opts)
   opts = opts or {}
   local node_opts = vim.tbl_extend("force", {
@@ -81,6 +140,18 @@ function M.nodes(opts)
     command = "node",
     mode = "info",
     args = "--include-hidden",
+    custom_actions = {
+      ["<C-t>"] = {
+        desc = "Attach ROS Tuner",
+        callback = function(node_name)
+          if require("nvim-ros2.config").options.tuner then
+            require("nvim-ros2.tuner").attach_node(node_name)
+          else
+            vim.notify("ROS Tuner is disabled in config.", vim.log.levels.WARN)
+          end
+        end,
+      },
+    },
   }, opts)
 
   ros_picker(node_opts)

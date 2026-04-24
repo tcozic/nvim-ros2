@@ -16,16 +16,39 @@ local function ros_picker(opts)
 
   local items = {}
   for _, line in ipairs(output) do
-    table.insert(items, {
-      text = line,
-      item = line,
-    })
+    table.insert(items, { text = line, item = line })
+  end
+
+  -- Sprint 5+: Dynamic Custom Actions Mapping
+  local win_keys = {}
+  local actions = {
+    confirm = function(picker, item)
+      picker:close()
+      if opts.on_select and item then
+        opts.on_select(item.text)
+      end
+    end,
+  }
+
+  if opts.custom_actions then
+    for key, def in pairs(opts.custom_actions) do
+      local action_name = "action_" .. key:gsub("%W", "")
+      win_keys[key] = { action_name, mode = { "i", "n" }, desc = def.desc }
+      actions[action_name] = function(picker, item)
+        picker:close()
+        if item and item.text then
+          def.callback(item.text)
+        end
+      end
+    end
   end
 
   Snacks.picker.pick({
     title = opts.prompt_title,
     items = items,
     format = "text",
+    win = { input = { keys = win_keys } },
+    actions = actions,
     preview = function(ctx)
       local item = ctx.item
       local cmd = { "ros2", opts.command, opts.mode, item.text }
@@ -37,24 +60,20 @@ local function ros_picker(opts)
 
       vim.system(cmd, { timeout = opts.timeout or 5000 }, function(result)
         vim.schedule(function()
-          if result.code == 124 then
-            ctx.preview:set_lines({ "Timeout: No data received" })
-          elseif result.stdout and result.stdout ~= "" then
-            ctx.preview:set_lines(vim.split(result.stdout, "\n"))
-            ctx.preview:highlight({ lang = "yaml" })
-          elseif result.stderr and result.stderr ~= "" then
-            ctx.preview:set_lines(vim.split(result.stderr, "\n"))
-          else
-            ctx.preview:set_lines({ "No data" })
-          end
+          pcall(function()
+            if result.code == 124 then
+              ctx.preview:set_lines({ "Timeout: No data received" })
+            elseif result.stdout and result.stdout ~= "" then
+              ctx.preview:set_lines(vim.split(result.stdout, "\n", { trimempty = true }))
+              ctx.preview:highlight({ lang = "yaml" })
+            elseif result.stderr and result.stderr ~= "" then
+              ctx.preview:set_lines(vim.split(result.stderr, "\n", { trimempty = true }))
+            else
+              ctx.preview:set_lines({ "No data" })
+            end
+          end)
         end)
       end)
-    end,
-    confirm = function(picker, item)
-      picker:close()
-      if opts.on_select and item then
-        opts.on_select(item.text) -- Return node name to caller
-      end
     end,
   })
 end
@@ -97,13 +116,27 @@ end
 
 function M.nodes(opts)
   opts = opts or {}
-  ros_picker(vim.tbl_extend("force", {
+  local node_opts = vim.tbl_extend("force", {
     prompt_title = "Active Nodes",
     system_cmd = { "ros2", "node", "list" },
     command = "node",
     mode = "info",
     args = "--include-hidden",
-  }, opts))
+    custom_actions = {
+      ["<C-t>"] = {
+        desc = "Attach ROS Tuner",
+        callback = function(node_name)
+          if require("nvim-ros2.config").options.tuner then
+            require("nvim-ros2.tuner").attach_node(node_name)
+          else
+            vim.notify("ROS Tuner is disabled in config.", vim.log.levels.WARN)
+          end
+        end,
+      },
+    },
+  }, opts)
+
+  ros_picker(node_opts)
 end
 
 function M.actions()

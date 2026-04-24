@@ -1,11 +1,10 @@
 -- Telescope includes
 local finders = require("telescope.finders")
 local pickers = require("telescope.pickers")
-local make_entry = require("telescope.make_entry")
 local conf = require("telescope.config").values
-
--- Local previewers
+local Utils = require("nvim-ros2.utils")
 local ros_previewers = require("nvim-ros2.telescope.previewers")
+-- Local previewers
 
 local M = {}
 
@@ -58,8 +57,6 @@ function M.interfaces()
     :find()
 end
 
---- Wrapper for a Telescope picker to select ROS 2 elements
---- Wrapper for a Telescope picker to select ROS 2 elements
 local function ros_picker(opts)
   local command_output = nil
   if vim.fn.executable("ros2") == 1 then
@@ -79,16 +76,26 @@ local function ros_picker(opts)
       previewer = require("nvim-ros2.telescope.previewers").preview_elements(opts),
       dynamic_filter = true,
       attach_mappings = function(prompt_bufnr, map)
-        -- Sprint 4: If an on_select callback is provided, override the Enter behavior
+        -- Sprint 5+: Inject custom actions (like <C-t> for Tuner)
+        if opts.custom_actions then
+          for key, def in pairs(opts.custom_actions) do
+            map({ "i", "n" }, key, function()
+              local selection = require("telescope.actions.state").get_selected_entry()
+              require("telescope.actions").close(prompt_bufnr)
+              if selection then
+                def.callback(selection[1])
+              end
+            end, { desc = def.desc })
+          end
+        end
+
         if opts.on_select then
           require("telescope.actions").select_default:replace(function()
             local selection = require("telescope.actions.state").get_selected_entry()
             require("telescope.actions").close(prompt_bufnr)
-            -- Return the selected string to the callback
             opts.on_select(selection[1])
           end)
         else
-          -- Original behavior: Disable enter behavior for standard info-only viewing
           map("i", "<CR>", function(_) end)
           map("n", "<CR>", function(_) end)
         end
@@ -98,12 +105,9 @@ local function ros_picker(opts)
     :find()
 end
 
--- Picker of active ROS 2 Nodes
 function M.nodes(opts)
   opts = opts or {}
   local system_cmd = { "ros2", "node", "list" }
-
-  -- Merge user-provided opts (like on_select) with the default node configuration
   local node_opts = vim.tbl_extend("force", {
     preview_title = "Node Info",
     prompt_title = "Search",
@@ -112,6 +116,18 @@ function M.nodes(opts)
     command = "node",
     mode = "info",
     args = "--include-hidden",
+    custom_actions = {
+      ["<C-t>"] = {
+        desc = "Attach ROS Tuner",
+        callback = function(node_name)
+          if require("nvim-ros2.config").options.tuner then
+            require("nvim-ros2.tuner").attach_node(node_name)
+          else
+            vim.notify("ROS Tuner is disabled in config.", vim.log.levels.WARN)
+          end
+        end,
+      },
+    },
   }, opts)
 
   ros_picker(node_opts)
