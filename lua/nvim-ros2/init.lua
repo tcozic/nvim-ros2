@@ -56,7 +56,24 @@ function M.setup(opts)
   if Config.options.picker == "telescope" then
     require("telescope").load_extension("ros2")
   end
-
+  if Config.options.tuner then
+    vim.api.nvim_create_user_command("RosTune", function(o)
+      local args = vim.split(o.args, " ", { trimempty = true })
+      local Tuner = require("nvim-ros2.tuner")
+      if #args == 0 then
+        Tuner.start_session()
+      elseif args[1] == "attach" and args[2] then
+        Tuner.attach_node(args[2])
+      elseif args[1] == "resync" then
+        Tuner.global_resync(0)
+      end
+    end, {
+      nargs = "*",
+      complete = function()
+        return { "attach", "resync" }
+      end,
+    })
+  end
   if Config.options.treesitter then
     M.setup_ros2_treesitter()
   end
@@ -66,5 +83,8 @@ function M.setup(opts)
 end
 
 M.pickers = require("nvim-ros2.pickers")
+M.tuner_status = function()
+  return require("nvim-ros2.tuner.ui").tuner_status()
+end
 
 return M

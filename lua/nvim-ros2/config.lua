@@ -4,6 +4,8 @@ local defaults = {
   autocmds = true,
   treesitter = true,
   picker = "telescope", -- "telescope", "snacks", "fzf"
+  tuner = true, -- New option
+  tuner_match_mode = "smart", -- Options: "smart", "simple", "all"
 }
 
 M.options = {}
@@ -18,4 +20,5 @@ function M.setup(opts)
     M.options.picker = "telescope"
   end
 end
+
 return M
