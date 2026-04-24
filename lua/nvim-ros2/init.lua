@@ -83,8 +83,11 @@ function M.setup(opts)
 end
 
 M.pickers = require("nvim-ros2.pickers")
-M.tuner_status = function()
-  return require("nvim-ros2.tuner.ui").tuner_status()
+function M.tuner_status()
+  if Config.options.tuner then
+    return require("nvim-ros2.tuner.ui").tuner_status()
+  end
+  return ""
 end
 
 return M

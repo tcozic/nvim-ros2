@@ -20,6 +20,17 @@ function M.set_sync_extmark(bufnr, row, anchor_text, range, state)
     { row, -1 },
     { details = true }
   )
+
+  -- Preserve the original File value prefix if anchor is omitted
+  if not anchor_text then
+    if #marks > 0 and marks[1][4].virt_text and marks[1][4].virt_text[1] then
+      local old_text = marks[1][4].virt_text[1][1]
+      anchor_text = old_text:match("^(%s*#%s*%[.-%])") or ""
+    else
+      anchor_text = ""
+    end
+  end
+
   vim.api.nvim_buf_set_extmark(bufnr, ns_id, row, 0, {
     id = #marks > 0 and marks[1][1] or nil,
     virt_text = { { anchor_text .. c.text .. (range or ""), c.hl } },
@@ -36,7 +47,26 @@ function M.tuner_status(bufnr)
   if not vim.b[bufnr].ros_tuner_active then
     return ""
   end
-  local marks = vim.api.nvim_buf_get_extmarks(bufnr, ns_id, 0, -1, { details = true })
+
+  local is_synthetic = vim.b[bufnr].is_synthetic
+  local bufname = vim.api.nvim_buf_get_name(bufnr)
+  local display_name = ""
+
+  if is_synthetic then
+    display_name = bufname:match("ROS_LIVE_(.*)$") or "Proxy"
+    display_name = "[Proxy: " .. display_name .. "]"
+  else
+    display_name = bufname:match("ROS_TUNER_(.*)$") or "File"
+    display_name = "[File: " .. display_name .. "]"
+  end
+
+  local marks = vim.api.nvim_buf_get_extmarks(
+    bufnr,
+    ns_id,
+    { 0, 0 },
+    { -1, -1 },
+    { details = true }
+  )
   local synced, unused, offline = 0, 0, 0
   for _, mark in ipairs(marks) do
     local sign = mark[4].sign_text
@@ -48,6 +78,7 @@ function M.tuner_status(bufnr)
       offline = offline + 1
     end
   end
+
   local status = {}
   if synced > 0 then
     table.insert(status, "● " .. synced)
@@ -58,7 +89,9 @@ function M.tuner_status(bufnr)
   if offline > 0 then
     table.insert(status, "○ " .. offline)
   end
-  return #status == 0 and "🤖 Tuning" or "🤖 " .. table.concat(status, " ")
+
+  local counts = #status == 0 and "" or table.concat(status, " ")
+  return "🤖 " .. display_name .. (counts ~= "" and (" " .. counts) or "")
 end
 
 return M
