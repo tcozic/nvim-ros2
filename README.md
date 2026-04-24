@@ -5,7 +5,7 @@ while developing ROS 2 modules.
 
 > **🌿 Fork Notice:** This repository is a feature-rich fork of the excellent [nvim-ros2 plugin by Erick Kramer](https://github.com/erickkramer/nvim-ros2). 
 > 
-> **Why use this fork?** It introduces two massive capabilities: the **ROS 2 Tuner** (a hardware-in-the-loop live parameter tuning engine) and the **Workspace Navigator** (package-scoped pickers). These features have been submitted upstream via a Pull Request, but you can use this fork directly in the meantime!
+> **Why use this fork?** It introduces two massive capabilities: the **ROS 2 Tuner** (a hardware-in-the-loop live parameter tuning engine) and the **Workspace Navigator** (package-scoped pickers). These features will be submitted upstream via a Pull Request, but you can use this fork directly in the meantime!
 
 ## 🪄 Features
 
