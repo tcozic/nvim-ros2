@@ -31,11 +31,25 @@ function M.set_sync_extmark(bufnr, row, anchor_text, range, state)
 end
 
 --- Exposes buffer health to external statuslines.
+--- Exposes buffer health to external statuslines.
 function M.tuner_status(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   if not vim.b[bufnr].ros_tuner_active then
     return ""
   end
+
+  local is_synthetic = vim.b[bufnr].is_synthetic
+  local bufname = vim.api.nvim_buf_get_name(bufnr)
+  local display_name = ""
+
+  if is_synthetic then
+    display_name = bufname:match("ROS_LIVE_(.*)$") or "Proxy"
+    display_name = "[Proxy: " .. display_name .. "]"
+  else
+    display_name = bufname:match("ROS_TUNER_(.*)$") or "File"
+    display_name = "[File: " .. display_name .. "]"
+  end
+
   local marks = vim.api.nvim_buf_get_extmarks(bufnr, ns_id, 0, -1, { details = true })
   local synced, unused, offline = 0, 0, 0
   for _, mark in ipairs(marks) do
@@ -48,6 +62,7 @@ function M.tuner_status(bufnr)
       offline = offline + 1
     end
   end
+
   local status = {}
   if synced > 0 then
     table.insert(status, "● " .. synced)
@@ -58,7 +73,9 @@ function M.tuner_status(bufnr)
   if offline > 0 then
     table.insert(status, "○ " .. offline)
   end
-  return #status == 0 and "🤖 Tuning" or "🤖 " .. table.concat(status, " ")
+
+  local counts = #status == 0 and "" or table.concat(status, " ")
+  return "🤖 " .. display_name .. (counts ~= "" and (" " .. counts) or "")
 end
 
 return M

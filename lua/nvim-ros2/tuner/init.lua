@@ -97,7 +97,7 @@ function M.attach_node(target_node)
     if #candidates == 0 then
       M.open_synthetic_proxy(target_node)
     elseif #candidates == 1 then
-      vim.cmd("edit " .. candidates[1].path)
+      vim.cmd("tabnew " .. candidates[1].path)
       vim.schedule(M.start_session)
     else
       vim.ui.select(candidates, {
@@ -123,17 +123,20 @@ function M.open_synthetic_proxy(node_name)
       return
     end
 
-    vim.cmd("vsplit")
     local scratch = vim.api.nvim_create_buf(false, true)
+    local open_mode = Config.options.tuner_open_mode or "split"
+
+    if open_mode == "tab" then
+      vim.cmd("tabnew")
+    elseif open_mode == "split" or open_mode == "vsplit" then
+      vim.cmd("vsplit")
+    end
+
     vim.api.nvim_set_current_buf(scratch)
     vim.bo[scratch].buftype, vim.bo[scratch].bufhidden, vim.bo[scratch].filetype =
       "nofile", "wipe", "yaml"
-    pcall(
-      vim.api.nvim_buf_set_name,
-      scratch,
-      "ROS_LIVE_" .. node_name:gsub("^/", ""):gsub("/", "_")
-    )
-
+    local safe_node_name = node_name:gsub("^/", ""):gsub("/", "_")
+    pcall(vim.api.nvim_buf_set_name, scratch, "ROS_LIVE_" .. safe_node_name)
     local dump_root_key = Utils.get_base_name(Utils.normalize_fqn(node_name))
     vim.b[scratch].ros_mappings = { [dump_root_key] = node_name }
     vim.b[scratch].is_synthetic = true
@@ -165,14 +168,21 @@ end
 function M.setup_scratch_buffer(orig_buf, mappings)
   local orig_lines = vim.api.nvim_buf_get_lines(orig_buf, 0, -1, false)
   local orig_win = vim.api.nvim_get_current_win()
+  local orig_name = vim.fs.basename(vim.api.nvim_buf_get_name(orig_buf))
 
-  vim.cmd("vsplit")
   local scratch = vim.api.nvim_create_buf(false, true)
+  local open_mode = Config.options.tuner_open_mode or "split"
+
+  if open_mode == "tab" then
+    vim.cmd("tabnew")
+  elseif open_mode == "split" or open_mode == "vsplit" then
+    vim.cmd("vsplit")
+  end
+
   vim.api.nvim_set_current_buf(scratch)
   vim.bo[scratch].buftype, vim.bo[scratch].bufhidden, vim.bo[scratch].filetype =
     "acwrite", "wipe", "yaml"
-  pcall(vim.api.nvim_buf_set_name, scratch, "ROS_TUNING_CONSOLE")
-
+  pcall(vim.api.nvim_buf_set_name, scratch, "ROS_TUNER_" .. orig_name)
   local mappings_dict = {}
   for _, m in ipairs(mappings) do
     mappings_dict[m.yaml_root] = m.fqn
@@ -234,16 +244,38 @@ function M.setup_crucible_autocmds(scratch, orig_buf, orig_win)
       if vim.b[scratch].crucible_active then
         return
       end
-      if not vim.api.nvim_win_is_valid(orig_win) then
-        return
+
+      local target_win = nil
+      for _, win in ipairs(vim.api.nvim_list_wins()) do
+        if vim.api.nvim_win_get_buf(win) == orig_buf then
+          target_win = win
+          break
+        end
       end
+
+      if not target_win then
+        vim.cmd("vsplit")
+        vim.api.nvim_set_current_buf(orig_buf)
+        target_win = vim.api.nvim_get_current_win()
+        vim.cmd("wincmd p")
+      end
+
       vim.b[scratch].crucible_active = true
       vim.api.nvim_buf_clear_namespace(scratch, vim.api.nvim_create_namespace("ros_tuner"), 0, -1)
+
       vim.cmd("diffthis")
       vim.opt_local.foldenable = false
-      vim.api.nvim_set_current_win(orig_win)
+      vim.api.nvim_set_current_win(target_win)
       vim.cmd("diffthis")
       vim.opt_local.foldenable = false
+
+      for _, w in ipairs(vim.api.nvim_list_wins()) do
+        if vim.api.nvim_win_get_buf(w) == scratch then
+          vim.api.nvim_set_current_win(w)
+          break
+        end
+      end
+
       vim.bo[scratch].modified = false
       vim.notify(
         "⚔️ Crucible Mode: Use 'dp' to push tuned values to the original file.",
@@ -726,24 +758,40 @@ function M.match_node_to_file(fqn, cb, bufnr)
       if find_out.code == 0 and find_out.stdout ~= "" then
         for _, f in ipairs(vim.split(find_out.stdout, "\n", { trimempty = true })) do
           if not f:match("/build/") and not f:match("/install/") then
-            local file_data, current_root = { root_keys = {}, footprints = {} }, nil
+            local file_data = { root_keys = {}, footprints = {} }
+            local current_root = nil
+            local has_ros_params = false -- NEW: Gatekeeper variable
+
             local file_handle = io.open(f, "r")
             if file_handle then
               for line in file_handle:lines() do
                 local r_key = line:match("^([%w_%-%.%/%*]+):%s*$")
                 if r_key then
                   current_root = r_key
-                  table.insert(file_data.root_keys, r_key)
-                  file_data.footprints[r_key] = file_data.footprints[r_key] or {}
+                  has_ros_params = false -- Reset for the new root key
                 elseif current_root then
-                  local p_key = line:match("^%s+([%w_%-%.]+):")
-                  if p_key and p_key ~= "ros__parameters" and not is_systemic(p_key) then
-                    file_data.footprints[current_root][p_key] = true
+                  -- Ensure this block is actually a ROS 2 parameter block
+                  if line:match("^%s+ros__parameters:") then
+                    if not has_ros_params then
+                      table.insert(file_data.root_keys, current_root)
+                      file_data.footprints[current_root] = file_data.footprints[current_root] or {}
+                      has_ros_params = true
+                    end
+                  elseif has_ros_params then
+                    -- Only index parameters if we are safely inside a ros__parameters block
+                    local p_key = line:match("^%s+([%w_%-%.]+):")
+                    if p_key and not is_systemic(p_key) then
+                      file_data.footprints[current_root][p_key] = true
+                    end
                   end
                 end
               end
               file_handle:close()
-              files[f] = file_data
+
+              -- Only cache the file if we actually found valid ROS 2 blocks inside it
+              if #file_data.root_keys > 0 then
+                files[f] = file_data
+              end
             end
           end
         end
@@ -766,16 +814,24 @@ function M.match_file_to_node(bufnr, cb)
     local r_key = line:match("^([%w_%-%.%/%*]+):%s*$")
     if r_key then
       current_root = r_key
-      footprints[r_key] = footprints[r_key] or {}
-      table.insert(file_data.root_keys, r_key)
+      has_ros_params = false -- Reset for the new root key
     elseif current_root then
-      local p_key = line:match("^%s+([%w_%-%.]+):")
-      if p_key and p_key ~= "ros__parameters" and not is_systemic(p_key) then
-        footprints[current_root][p_key] = true
+      -- Ensure this block is actually a ROS 2 parameter block
+      if line:match("^%s+ros__parameters:") then
+        if not has_ros_params then
+          table.insert(file_data.root_keys, current_root)
+          footprints[current_root] = footprints[current_root] or {}
+          has_ros_params = true
+        end
+      elseif has_ros_params then
+        -- Only index parameters if we are safely inside a ros__parameters block
+        local p_key = line:match("^%s+([%w_%-%.]+):")
+        if p_key and not is_systemic(p_key) then
+          footprints[current_root][p_key] = true
+        end
       end
     end
   end
-
   RosApi.list_nodes(function(active_nodes)
     if #active_nodes == 0 then
       return cb({})

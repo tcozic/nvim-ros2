@@ -6,6 +6,7 @@ local defaults = {
   picker = "telescope", -- "telescope", "snacks", "fzf"
   tuner = true, -- New option
   tuner_match_mode = "smart", -- Options: "smart", "simple", "all"
+  tuner_open_mode = "split", -- Options: "split", "tab", "hide"
 }
 
 M.options = {}
