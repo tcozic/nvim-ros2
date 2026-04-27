@@ -512,7 +512,7 @@ function M.attach_to_buffer(bufnr)
             return
           end
 
-          local captured_row = vim.api.nvim_win_get_cursor(0)[1] - 1
+          local captured_row = vim.api.nvim_win_get_cursor(winid)[1] - 1
           local node, param, _, val = Engine.resolve_parameter_context(bufnr)
           local fqn = vim.b[bufnr].ros_mappings and vim.b[bufnr].ros_mappings[node] or node
 
@@ -522,14 +522,36 @@ function M.attach_to_buffer(bufnr)
             local cache_key = fqn .. ":" .. param
             RosApi.get_param(fqn, param, function(live_val)
               if live_val and live_val ~= val and live_val ~= "unknown" then
-                -- Sync UI or buffer if drifted
-                UI.set_sync_extmark(
-                  bufnr,
-                  captured_row,
-                  "  # [Live Drift: " .. live_val .. "]",
-                  nil,
-                  "synced"
-                )
+                local line =
+                  vim.api.nvim_buf_get_lines(bufnr, captured_row, captured_row + 1, false)[1]
+                if line then
+                  local escaped_val = val:gsub("([%.%+%-%*%?%[%]%^%$%(%)%%])", "%%%1")
+                  local safe_live = tostring(live_val):gsub("%%", "%%%%")
+                  local new_line =
+                    line:gsub("(:%s*)" .. escaped_val .. "(%s*.*)$", "%1" .. safe_live .. "%2")
+
+                  if new_line ~= line then
+                    vim.api.nvim_buf_set_lines(
+                      bufnr,
+                      captured_row,
+                      captured_row + 1,
+                      false,
+                      { new_line }
+                    )
+                    UI.set_sync_extmark(
+                      bufnr,
+                      captured_row,
+                      "  # [Drift Auto-Corrected]",
+                      nil,
+                      "synced"
+                    )
+                    -- Update internal state so InsertLeave doesn't undo this
+                    local state = get_state(bufnr)
+                    if state then
+                      state.last_val = live_val
+                    end
+                  end
+                end
               end
             end)
             -- Fetch Range Metadata
