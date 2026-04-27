@@ -207,9 +207,19 @@ function M.packages()
     cwd = ws_root,
     find_command = vim.fn.executable("fd") == 1
         and { "fd", "-g", "package.xml", "--exclude", "build", "--exclude", "install" }
-        or  { "find", ".", "-name", "package.xml", "-not", "-path", "*/build/*", "-not", "-path", "*/install/*" },
-    attach_mappings = function(_, map)
-    attach_mappings = function(_, map)
+      or {
+        "find",
+        ".",
+        "-name",
+        "package.xml",
+        "-not",
+        "-path",
+        "*/build/*",
+        "-not",
+        "-path",
+        "*/install/*",
+      },
+    attach_mappings = function(_, map) -- only once
       map("i", "<CR>", function(prompt_bufnr)
         local selection = require("telescope.actions.state").get_selected_entry()
         require("telescope.actions").close(prompt_bufnr)
