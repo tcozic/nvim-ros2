@@ -100,7 +100,17 @@ function M.nodes(opts)
         desc = "Attach ROS Tuner",
         callback = function(node_name)
           if require("nvim-ros2.config").options.tuner then
-            require("nvim-ros2.tuner").attach_node(node_name)
+            require("nvim-ros2.tuner").attach_node(node_name, false)
+          else
+            vim.notify("ROS Tuner is disabled in config.", vim.log.levels.WARN)
+          end
+        end,
+      },
+      ["<C-r>"] = {
+        desc = "Attach ROS Tuner",
+        callback = function(node_name)
+          if require("nvim-ros2.config").options.tuner then
+            require("nvim-ros2.tuner").attach_node(node_name, true)
           else
             vim.notify("ROS Tuner is disabled in config.", vim.log.levels.WARN)
           end

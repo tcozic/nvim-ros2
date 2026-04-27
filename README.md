@@ -66,17 +66,25 @@ Package-aware pickers designed to scope your searches to the specific ROS 2 pack
 - **Package Hub:** List all ROS 2 packages in your workspace and open them in your file explorer.
 - **Quick-Edits:** Instantly jump to the `CMakeLists.txt` or `package.xml` of your current package.
 - **Snipers:** Fast directory navigation to jump directly into `msg/`, `srv/`, `action/`, or `include/` folders.
-- **Smart Attach:** Press `<C-t>` while hovering over a node in the Active Nodes picker to instantly attach the ROS Tuner.
-
+- **Smart Attach:** Press `<C-t>` while hovering over a node in the Active Nodes picker to instantly attach the ROS Tuner to its matching file, or `<C-r>` to attach a raw Scratch Proxy.
 ### 🎛️ ROS 2 Tuner
 
 A hardware-in-the-loop tuning engine to safely synchronize local parameter files (`.yaml` / `.param`) with live DDS nodes on your robot. 
 
-- **Direction A (Attach Proxy):** Run `:RosTune attach <node>` to spawn a synthetic, temporary YAML buffer perfectly synced to the live node.
-- **Direction B (Smartmatch):** Open any local parameter file and run `:RosTune`. The algorithmic engine scans the DDS network, fuzzily matches your YAML keys to active nodes, and spawns a Tuning Console.
-- **Direction C (Crucible Mode):** After experimenting with live values in the Tuning Console, simply save the file (`:w`). Both the console and your original file will enter Neovim's `diffthis` mode, allowing you to selectively push (`dp`) your tuned values back to the source code.
+- **Node-First Workflow (`:RosTune attach <node>`):** Select a live node from the network. The engine will instantly open its matching `.yaml` source file. 
+  - *Want to just mess around safely?* Add `--scratch` (or hit `<C-r>` in the Nodes Picker) to bypass your local files and spawn a temporary, synthetic proxy buffer perfectly synced to the live node.
+- **File-First Workflow (`:RosTune`):** Open any local parameter file and run the command. The engine scans the DDS network, fuzzily matches your YAML keys to active nodes, and spawns a connected Tuning Console.
+- **Crucible Mode (Safe Git Integration):** After experimenting with live values in the Tuning Console, simply save the file (`:w`). Both the console and your original file will enter Neovim's `diffthis` mode side-by-side, allowing you to selectively push (`dp`) your tuned values back to the source code.
 - **Live Event Loop:** Values and boundaries (Ranges) are dynamically fetched as virtual text. Modifying a value in Insert mode safely triggers a `ros2 param set` network call in the background.
 
+### 🎛️ ROS 2 Tuner Auto-Discovery
+
+To prevent flooding your curated `.yaml` configuration files with ROS 2 systemic and component defaults, the Tuner does not automatically inject missing parameters by default.
+
+* **File-backed Buffers:** Syncing will only update the values of parameters already present in your file. 
+  * Use `:RosTune resync --pull` (or `<leader>rp`) to explicitly fetch and inject newly discovered parameters.
+  * Set `tuner_pull_missing = true` in your `opts` to automatically pull them every time.
+* **Synthetic Proxy Buffers:** When using `:RosTune attach` without a backing file, the Tuner will always pull and display all live parameters regardless of this setting.
 #### 📊 Statusline Integration
 You can expose the buffer's tuning health (synced, unused, or offline parameters) directly in your statusline (e.g., Lualine):
 ```lua
@@ -133,6 +141,8 @@ return {
 
     -- Tuner
     { "<leader>rt", "<cmd>RosTune<cr>", desc = "Start ROS Tuner" },
+    { "<leader>rs", "<cmd>RosTune resync<CR>", desc = "[T]uner [R]esync" },
+    { "<leader>rp", "<cmd>RosTune resync --pull<CR>", desc = "[T]uner [P]ull Missing Params" },
   },
 }
 ```
@@ -177,6 +187,8 @@ return {
 
     -- Tuner
     { "<leader>rt", "<cmd>RosTune<cr>", desc = "Start ROS Tuner" },
+    { "<leader>rs", "<cmd>RosTune resync<CR>", desc = "[T]uner [R]esync" },
+    { "<leader>rp", "<cmd>RosTune resync --pull<CR>", desc = "[T]uner [P]ull Missing Params" },
   },
 }
 ```
@@ -221,6 +233,8 @@ return {
 
     -- Tuner
     { "<leader>rt", "<cmd>RosTune<cr>", desc = "Start ROS Tuner" },
+    { "<leader>rs", "<cmd>RosTune resync<CR>", desc = "[T]uner [R]esync" },
+    { "<leader>rp", "<cmd>RosTune resync --pull<CR>", desc = "[T]uner [P]ull Missing Params" },
   },
 }
 ```

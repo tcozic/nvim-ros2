@@ -92,11 +92,16 @@ function M.start_session()
   end)
 end
 
-function M.attach_node(target_node)
+function M.attach_node(target_node, force_scratch)
+  if force_scratch then
+    return M.open_synthetic_proxy(target_node)
+  end
+
   M.match_node_to_file(target_node, function(candidates)
     if #candidates == 0 then
       M.open_synthetic_proxy(target_node)
     elseif #candidates == 1 then
+      -- Fast Path: Exactly 1 match, open it directly
       vim.cmd("edit " .. candidates[1].path)
       vim.schedule(M.start_session)
     else
@@ -107,7 +112,7 @@ function M.attach_node(target_node)
         end,
       }, function(choice)
         if choice then
-          vim.cmd("edit " .. choice.path) -- [FIX] Use choice instead of candidates[1]
+          vim.cmd("edit " .. choice.path)
           vim.schedule(M.start_session)
         end
       end)
@@ -291,7 +296,8 @@ function M.setup_crucible_autocmds(scratch, orig_buf, orig_win)
   })
 end
 
-function M.global_resync(bufnr, cb)
+-- 1. Update the signature to accept force_pull
+function M.global_resync(bufnr, cb, force_pull)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   local mappings = vim.b[bufnr].ros_mappings or {}
   local global_live = {}
@@ -314,7 +320,8 @@ function M.global_resync(bufnr, cb)
         end
       end
       if pending == 0 then
-        M.reconcile_live_parameters(bufnr, global_live)
+        -- [MODIFIED] Pass force_pull down the chain
+        M.reconcile_live_parameters(bufnr, global_live, force_pull)
         if cb then
           cb()
         end
@@ -323,7 +330,7 @@ function M.global_resync(bufnr, cb)
   end
 end
 
-function M.reconcile_live_parameters(scratch_buf, global_live_params)
+function M.reconcile_live_parameters(scratch_buf, global_live_params, force_pull)
   local parser = vim.treesitter.get_parser(scratch_buf, "yaml")
   if parser then
     parser:parse(true)
@@ -334,7 +341,10 @@ function M.reconcile_live_parameters(scratch_buf, global_live_params)
   vim.bo[scratch_buf].undolevels = -1
 
   local matched_keys, missing_params, synced_count, injected_count = {}, {}, 0, 0
-
+  local skipped_count = 0
+  local should_pull = vim.b[scratch_buf].is_synthetic
+    or Config.options.tuner_pull_missing
+    or force_pull
   -- Phase 1: Drift Detection
   for row, line in ipairs(lines) do
     local col = line:find("[^%s]")
@@ -369,8 +379,13 @@ function M.reconcile_live_parameters(scratch_buf, global_live_params)
     if not matched_keys[composite_key] then
       local node, param = composite_key:match("^(.-):(.+)$")
       if not is_systemic(param) then
-        missing_params[node] = missing_params[node] or {}
-        missing_params[node][param] = live_val
+        if should_pull then
+          -- [MODIFIED] Only build the insertion tree if pulling is allowed
+          missing_params[node] = missing_params[node] or {}
+          missing_params[node][param] = live_val
+        else
+          skipped_count = skipped_count + 1
+        end
       end
     end
   end
@@ -436,11 +451,21 @@ function M.reconcile_live_parameters(scratch_buf, global_live_params)
 
   vim.bo[scratch_buf].modified = false
   vim.bo[scratch_buf].undolevels = old_ul
-  if synced_count > 0 or injected_count > 0 then
-    vim.notify(
-      string.format("✅ Sync Complete: %d drifted, %d discovered!", synced_count, injected_count),
-      vim.log.levels.WARN
-    )
+  if vim.b[scratch_buf].crucible_active and injected_count > 0 then
+    vim.cmd("diffupdate")
+  end
+
+  -- [MODIFIED] Smart Notification
+  if synced_count > 0 or injected_count > 0 or skipped_count > 0 then
+    local msg = string.format("✅ Sync Complete: %d drifted", synced_count)
+    if injected_count > 0 then
+      msg = msg .. string.format(", %d discovered!", injected_count)
+    end
+    if skipped_count > 0 then
+      msg = msg .. string.format(" 👻 %d skipped (use --pull)", skipped_count)
+    end
+    -- Switched from WARN to INFO since partial pulls are now expected behavior
+    vim.notify(msg, vim.log.levels.INFO)
   end
 end
 

@@ -7,6 +7,7 @@ local defaults = {
   tuner = true, -- New option
   tuner_match_mode = "smart", -- Options: "smart", "simple", "all"
   tuner_open_mode = "split", -- Options: "split", "tab", "hide"
+  tuner_pull_missing = false, -- Gating auto-injection of discovered parameters
 }
 
 M.options = {}
