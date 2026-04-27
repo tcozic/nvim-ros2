@@ -1,0 +1,2249 @@
+diff --git a/README.md b/README.md
+index 467f8ee..03c0312 100644
+--- a/README.md
++++ b/README.md
+@@ -3,6 +3,10 @@
+ **nvim-ros2** is a simple lua plugin that adds useful features to enhance your development workflow
+ while developing ROS 2 modules.
+ 
++> **🌿 Fork Notice:** This repository is a feature-rich fork of the excellent [nvim-ros2 plugin by Erick Kramer](https://github.com/erickkramer/nvim-ros2). 
++> 
++> **Why use this fork?** It introduces two massive capabilities: the **ROS 2 Tuner** (a hardware-in-the-loop live parameter tuning engine) and the **Workspace Navigator** (package-scoped pickers). These features have been submitted upstream via a Pull Request, but you can use this fork directly in the meantime!
++
+ ## 🪄 Features
+ 
+ ### 🌳 Treesitter Parser
+@@ -53,6 +57,36 @@ while developing ROS 2 modules.
+ - Configure `*.action`, `*.msg`, and `*.srv` files as `ros` filetype
+ - Configure `*.launch`, `*.xacro`, and `*.urdf` files as `xml` filetype
+ 
++
++### 🧭 Workspace Navigator
++
++Package-aware pickers designed to scope your searches to the specific ROS 2 package you are currently editing. Available across Telescope, Snacks, and Fzf-lua.
++
++- **Scoped Searches:** Find files or live grep exclusively within the boundaries of the active package.
++- **Package Hub:** List all ROS 2 packages in your workspace and open them in your file explorer.
++- **Quick-Edits:** Instantly jump to the `CMakeLists.txt` or `package.xml` of your current package.
++- **Snipers:** Fast directory navigation to jump directly into `msg/`, `srv/`, `action/`, or `include/` folders.
++- **Smart Attach:** Press `<C-t>` while hovering over a node in the Active Nodes picker to instantly attach the ROS Tuner.
++
++### 🎛️ ROS 2 Tuner
++
++A hardware-in-the-loop tuning engine to safely synchronize local parameter files (`.yaml` / `.param`) with live DDS nodes on your robot. 
++
++- **Direction A (Attach Proxy):** Run `:RosTune attach <node>` to spawn a synthetic, temporary YAML buffer perfectly synced to the live node.
++- **Direction B (Smartmatch):** Open any local parameter file and run `:RosTune`. The algorithmic engine scans the DDS network, fuzzily matches your YAML keys to active nodes, and spawns a Tuning Console.
++- **Direction C (Crucible Mode):** After experimenting with live values in the Tuning Console, simply save the file (`:w`). Both the console and your original file will enter Neovim's `diffthis` mode, allowing you to selectively push (`dp`) your tuned values back to the source code.
++- **Live Event Loop:** Values and boundaries (Ranges) are dynamically fetched as virtual text. Modifying a value in Insert mode safely triggers a `ros2 param set` network call in the background.
++
++#### 📊 Statusline Integration
++You can expose the buffer's tuning health (synced, unused, or offline parameters) directly in your statusline (e.g., Lualine):
++```lua
++require("lualine").setup({
++  sections = {
++    lualine_x = { require("nvim-ros2").tuner_status },
++  }
++})
++```
++
+ ## 🧰 Installation
+ 
+ ## Configuration
+@@ -63,24 +97,42 @@ while developing ROS 2 modules.
+ 
+ ```lua
+ return {
+-  "ErickKramer/nvim-ros2",
++  "tcozic/nvim-ros2",
+   dependencies = {
+-    "nvim-lua/plenary.nvim",
+     "nvim-telescope/telescope.nvim",
+     "nvim-treesitter/nvim-treesitter",
+   },
+   opts = {
+-    -- picker = "telescope", -- Default
++    picker = "telescope",
+     autocmds = true,
+     treesitter = true,
++    tuner = true, -- Enables the :RosTune command and hardware proxy
++    tuner_match_mode = "smart", -- "smart" (algorithm), "simple" (root keys), or "all" (skip filter)
+   },
+   keys = {
++    -- Base Pickers
+     { "<leader>li", function() require("nvim-ros2").pickers.interfaces() end, desc = "[ROS 2]: List interfaces" },
+     { "<leader>ln", function() require("nvim-ros2").pickers.nodes() end, desc = "[ROS 2]: List nodes" },
+     { "<leader>la", function() require("nvim-ros2").pickers.actions() end, desc = "[ROS 2]: List actions" },
+     { "<leader>lt", function() require("nvim-ros2").pickers.topics_info() end, desc = "[ROS 2]: List topics with info" },
+     { "<leader>le", function() require("nvim-ros2").pickers.topics_echo() end, desc = "[ROS 2]: List topics with echo" },
+     { "<leader>ls", function() require("nvim-ros2").pickers.services() end, desc = "[ROS 2]: List services" },
++    
++    -- Workspace Navigator
++    { "<leader>fp", function() require("nvim-ros2").pickers.packages() end, desc = "[F]ind ROS2 [P]ackage" },
++    { "<leader>pf", function() require("nvim-ros2").pickers.find_files_package() end, desc = "Find in Package" },
++    { "<leader>pg", function() require("nvim-ros2").pickers.grep_package() end, desc = "Grep in Package" },
++    { "<leader>pc", function() require("nvim-ros2").pickers.edit_cmake() end, desc = "Edit CMakeLists.txt" },
++    { "<leader>pp", function() require("nvim-ros2").pickers.edit_package_xml() end, desc = "Edit package.xml" },
++    
++    -- Snipers
++    { "<leader>pm", function() require("nvim-ros2").pickers.sniper("msg") end, desc = "Sniper: msg/" },
++    { "<leader>ps", function() require("nvim-ros2").pickers.sniper("srv") end, desc = "Sniper: srv/" },
++    { "<leader>pa", function() require("nvim-ros2").pickers.sniper("action") end, desc = "Sniper: action/" },
++    { "<leader>pi", function() require("nvim-ros2").pickers.sniper("include") end, desc = "Sniper: include/" },
++
++    -- Tuner
++    { "<leader>rt", "<cmd>RosTune<cr>", desc = "Start ROS Tuner" },
+   },
+ }
+ ```
+@@ -89,7 +141,7 @@ return {
+ 
+ ```lua
+ return {
+-  "ErickKramer/nvim-ros2",
++  "tcozic/nvim-ros2",
+   dependencies = {
+     "folke/snacks.nvim",
+     "nvim-treesitter/nvim-treesitter",
+@@ -98,14 +150,33 @@ return {
+     picker = "snacks",
+     autocmds = true,
+     treesitter = true,
++    tuner = true,
++    tuner_match_mode = "smart",
+   },
+   keys = {
++    -- Base Pickers
+     { "<leader>li", function() require("nvim-ros2").pickers.interfaces() end, desc = "[ROS 2]: List interfaces" },
+     { "<leader>ln", function() require("nvim-ros2").pickers.nodes() end, desc = "[ROS 2]: List nodes" },
+     { "<leader>la", function() require("nvim-ros2").pickers.actions() end, desc = "[ROS 2]: List actions" },
+     { "<leader>lt", function() require("nvim-ros2").pickers.topics_info() end, desc = "[ROS 2]: List topics with info" },
+     { "<leader>le", function() require("nvim-ros2").pickers.topics_echo() end, desc = "[ROS 2]: List topics with echo" },
+     { "<leader>ls", function() require("nvim-ros2").pickers.services() end, desc = "[ROS 2]: List services" },
++    
++    -- Workspace Navigator
++    { "<leader>fp", function() require("nvim-ros2").pickers.packages() end, desc = "[F]ind ROS2 [P]ackage" },
++    { "<leader>pf", function() require("nvim-ros2").pickers.find_files_package() end, desc = "Find in Package" },
++    { "<leader>pg", function() require("nvim-ros2").pickers.grep_package() end, desc = "Grep in Package" },
++    { "<leader>pc", function() require("nvim-ros2").pickers.edit_cmake() end, desc = "Edit CMakeLists.txt" },
++    { "<leader>pp", function() require("nvim-ros2").pickers.edit_package_xml() end, desc = "Edit package.xml" },
++    
++    -- Snipers
++    { "<leader>pm", function() require("nvim-ros2").pickers.sniper("msg") end, desc = "Sniper: msg/" },
++    { "<leader>ps", function() require("nvim-ros2").pickers.sniper("srv") end, desc = "Sniper: srv/" },
++    { "<leader>pa", function() require("nvim-ros2").pickers.sniper("action") end, desc = "Sniper: action/" },
++    { "<leader>pi", function() require("nvim-ros2").pickers.sniper("include") end, desc = "Sniper: include/" },
++
++    -- Tuner
++    { "<leader>rt", "<cmd>RosTune<cr>", desc = "Start ROS Tuner" },
+   },
+ }
+ ```
+@@ -114,7 +185,7 @@ return {
+ 
+ ```lua
+ return {
+-  "ErickKramer/nvim-ros2",
++  "tcozic/nvim-ros2",
+   dependencies = {
+     "ibhagwan/fzf-lua",
+     "nvim-treesitter/nvim-treesitter",
+@@ -123,14 +194,33 @@ return {
+     picker = "fzf",
+     autocmds = true,
+     treesitter = true,
++    tuner = true,
++    tuner_match_mode = "smart",
+   },
+   keys = {
++    -- Base Pickers
+     { "<leader>li", function() require("nvim-ros2").pickers.interfaces() end, desc = "[ROS 2]: List interfaces" },
+     { "<leader>ln", function() require("nvim-ros2").pickers.nodes() end, desc = "[ROS 2]: List nodes" },
+     { "<leader>la", function() require("nvim-ros2").pickers.actions() end, desc = "[ROS 2]: List actions" },
+     { "<leader>lt", function() require("nvim-ros2").pickers.topics_info() end, desc = "[ROS 2]: List topics with info" },
+     { "<leader>le", function() require("nvim-ros2").pickers.topics_echo() end, desc = "[ROS 2]: List topics with echo" },
+     { "<leader>ls", function() require("nvim-ros2").pickers.services() end, desc = "[ROS 2]: List services" },
++    
++    -- Workspace Navigator
++    { "<leader>fp", function() require("nvim-ros2").pickers.packages() end, desc = "[F]ind ROS2 [P]ackage" },
++    { "<leader>pf", function() require("nvim-ros2").pickers.find_files_package() end, desc = "Find in Package" },
++    { "<leader>pg", function() require("nvim-ros2").pickers.grep_package() end, desc = "Grep in Package" },
++    { "<leader>pc", function() require("nvim-ros2").pickers.edit_cmake() end, desc = "Edit CMakeLists.txt" },
++    { "<leader>pp", function() require("nvim-ros2").pickers.edit_package_xml() end, desc = "Edit package.xml" },
++    
++    -- Snipers
++    { "<leader>pm", function() require("nvim-ros2").pickers.sniper("msg") end, desc = "Sniper: msg/" },
++    { "<leader>ps", function() require("nvim-ros2").pickers.sniper("srv") end, desc = "Sniper: srv/" },
++    { "<leader>pa", function() require("nvim-ros2").pickers.sniper("action") end, desc = "Sniper: action/" },
++    { "<leader>pi", function() require("nvim-ros2").pickers.sniper("include") end, desc = "Sniper: include/" },
++
++    -- Tuner
++    { "<leader>rt", "<cmd>RosTune<cr>", desc = "Start ROS Tuner" },
+   },
+ }
+ ```
+diff --git a/lua/nvim-ros2/api/ros2.lua b/lua/nvim-ros2/api/ros2.lua
+new file mode 100644
+index 0000000..75752c1
+--- /dev/null
++++ b/lua/nvim-ros2/api/ros2.lua
+@@ -0,0 +1,86 @@
++local M = {}
++
++function M.list_nodes(cb)
++  vim.system({ "ros2", "node", "list" }, { text = true, timeout = 2000 }, function(out)
++    vim.schedule(function()
++      if out.code ~= 0 or out.stdout == "" then
++        cb({})
++      else
++        cb(vim.split(out.stdout, "\n", { trimempty = true }))
++      end
++    end)
++  end)
++end
++
++function M.get_param_metadata(node_name, param_name, cb)
++  vim.system(
++    { "ros2", "param", "describe", node_name, param_name },
++    { text = true, timeout = 2000 },
++    function(out)
++      vim.schedule(function()
++        local meta = {}
++        if out.code == 0 then
++          local min_val = out.stdout:match("Min value:%s*([%d%.%-]+)")
++          local max_val = out.stdout:match("Max value:%s*([%d%.%-]+)")
++          if min_val and max_val then
++            meta.range = string.format("[%s - %s]", min_val, max_val)
++          end
++        end
++        cb(meta)
++      end)
++    end
++  )
++end
++
++function M.get_param(node_name, param_name, cb)
++  vim.system(
++    { "ros2", "param", "get", node_name, param_name },
++    { text = true, timeout = 2000 },
++    function(out)
++      vim.schedule(function()
++        if out.code ~= 0 or out.signal ~= 0 then
++          local err = (out.stderr ~= "" and out.stderr) or out.stdout
++          if not err:match("Parameter not set") then
++            vim.notify("ROS 2 Get Failed: " .. err, vim.log.levels.ERROR)
++          end
++          return
++        end
++        local match = out.stdout:match("value is:%s*(.-)%s*\n")
++          or out.stdout:match("value is:%s*(.-)%s*$")
++        if cb and match then
++          cb(match)
++        end
++      end)
++    end
++  )
++end
++
++function M.set_param(node_name, param_name, value_type, value_text, cb)
++  local val = (value_type == "boolean") and value_text:lower() or value_text
++  vim.system(
++    { "ros2", "param", "set", node_name, param_name, val },
++    { text = true, timeout = 2000 },
++    function(out)
++      vim.schedule(function()
++        if out.code ~= 0 or out.signal ~= 0 then
++          local err = (out.stderr and out.stderr ~= "") and out.stderr or out.stdout
++          vim.notify("ROS 2 Set Failed: " .. err, vim.log.levels.ERROR)
++        elseif cb then
++          cb()
++        else
++          vim.notify(string.format("🚀 Tuned! %s = %s", param_name, val), vim.log.levels.INFO)
++        end
++      end)
++    end
++  )
++end
++
++function M.dump_params(node_name, cb)
++  vim.system({ "ros2", "param", "dump", node_name }, { text = true, timeout = 3000 }, function(out)
++    vim.schedule(function()
++      cb(out.code == 0 and out.stdout or nil)
++    end)
++  end)
++end
++
++return M
+diff --git a/lua/nvim-ros2/config.lua b/lua/nvim-ros2/config.lua
+index 5bbc790..03fd6fb 100644
+--- a/lua/nvim-ros2/config.lua
++++ b/lua/nvim-ros2/config.lua
+@@ -4,6 +4,9 @@ local defaults = {
+   autocmds = true,
+   treesitter = true,
+   picker = "telescope", -- "telescope", "snacks", "fzf"
++  tuner = true, -- New option
++  tuner_match_mode = "smart", -- Options: "smart", "simple", "all"
++  tuner_open_mode = "split", -- Options: "split", "tab", "hide"
+ }
+ 
+ M.options = {}
+@@ -18,4 +21,5 @@ function M.setup(opts)
+     M.options.picker = "telescope"
+   end
+ end
++
+ return M
+diff --git a/lua/nvim-ros2/init.lua b/lua/nvim-ros2/init.lua
+index 21587a7..c1bc4e1 100644
+--- a/lua/nvim-ros2/init.lua
++++ b/lua/nvim-ros2/init.lua
+@@ -56,7 +56,24 @@ function M.setup(opts)
+   if Config.options.picker == "telescope" then
+     require("telescope").load_extension("ros2")
+   end
+-
++  if Config.options.tuner then
++    vim.api.nvim_create_user_command("RosTune", function(o)
++      local args = vim.split(o.args, " ", { trimempty = true })
++      local Tuner = require("nvim-ros2.tuner")
++      if #args == 0 then
++        Tuner.start_session()
++      elseif args[1] == "attach" and args[2] then
++        Tuner.attach_node(args[2])
++      elseif args[1] == "resync" then
++        Tuner.global_resync(0)
++      end
++    end, {
++      nargs = "*",
++      complete = function()
++        return { "attach", "resync" }
++      end,
++    })
++  end
+   if Config.options.treesitter then
+     M.setup_ros2_treesitter()
+   end
+@@ -66,5 +83,11 @@ function M.setup(opts)
+ end
+ 
+ M.pickers = require("nvim-ros2.pickers")
++function M.tuner_status()
++  if Config.options.tuner then
++    return require("nvim-ros2.tuner.ui").tuner_status()
++  end
++  return ""
++end
+ 
+ return M
+diff --git a/lua/nvim-ros2/pickers/fzf.lua b/lua/nvim-ros2/pickers/fzf.lua
+index 9eadcc3..2e116e2 100644
+--- a/lua/nvim-ros2/pickers/fzf.lua
++++ b/lua/nvim-ros2/pickers/fzf.lua
+@@ -1,5 +1,5 @@
+ local M = {}
+-
++local Utils = require("nvim-ros2.utils")
+ local function get_command_output(cmd)
+   if vim.fn.executable("ros2") ~= 1 then
+     vim.notify("ros2 not found", vim.log.levels.ERROR)
+@@ -7,13 +7,33 @@ local function get_command_output(cmd)
+   end
+   return vim.fn.systemlist(cmd)
+ end
+-
+ local function ros_picker(opts)
+   local output = get_command_output(opts.system_cmd)
+   if not output then
+     return
+   end
+ 
++  -- Sprint 5+: Build actions table with custom injects
++  local actions = {
++    ["default"] = function(selected)
++      if opts.on_select and selected and #selected > 0 then
++        opts.on_select(selected[1])
++      end
++    end,
++  }
++
++  if opts.custom_actions then
++    for key, def in pairs(opts.custom_actions) do
++      -- Translate Neovim "<C-t>" to fzf-lua "ctrl-t"
++      local fzf_key = key:gsub("<[cC]%-(.)>", "ctrl-%1"):lower()
++      actions[fzf_key] = function(selected)
++        if selected and #selected > 0 then
++          def.callback(selected[1])
++        end
++      end
++    end
++  end
++
+   local fzf = require("fzf-lua")
+   fzf.fzf_exec(output, {
+     prompt = opts.prompt_title .. "> ",
+@@ -28,9 +48,7 @@ local function ros_picker(opts)
+       end
+       return vim.fn.systemlist(cmd)
+     end,
+-    actions = {
+-      ["default"] = function() end, -- No-op
+-    },
++    actions = actions,
+   })
+ end
+ 
+@@ -69,14 +87,29 @@ function M.interfaces()
+   })
+ end
+ 
+-function M.nodes()
+-  ros_picker({
++function M.nodes(opts)
++  opts = opts or {}
++  local node_opts = vim.tbl_extend("force", {
+     prompt_title = "Active Nodes",
+     system_cmd = { "ros2", "node", "list" },
+     command = "node",
+     mode = "info",
+     args = "--include-hidden",
+-  })
++    custom_actions = {
++      ["<C-t>"] = {
++        desc = "Attach ROS Tuner",
++        callback = function(node_name)
++          if require("nvim-ros2.config").options.tuner then
++            require("nvim-ros2.tuner").attach_node(node_name)
++          else
++            vim.notify("ROS Tuner is disabled in config.", vim.log.levels.WARN)
++          end
++        end,
++      },
++    },
++  }, opts)
++
++  ros_picker(node_opts)
+ end
+ 
+ function M.actions()
+@@ -119,4 +152,66 @@ function M.topics_echo()
+   })
+ end
+ 
++function M.packages()
++  local ws_root = Utils.get_workspace_root(0)
++
++  require("fzf-lua").files({
++    prompt = "ROS 2 Packages> ",
++    cwd = ws_root,
++    cmd = vim.fn.executable("fd") == 1 and "fd ^package.xml$ --exclude build --exclude install"
++      or "find . -name package.xml -not -path '*/install/*' -not -path '*/build/*'",
++    actions = {
++      ["default"] = function(selected)
++        if not selected or #selected == 0 then
++          return
++        end
++        -- fzf-lua returns the file path, we need its directory
++        local pkg_dir = vim.fs.dirname(ws_root .. "/" .. selected[1])
++        if pcall(require, "oil") then
++          require("oil").open(pkg_dir)
++        else
++          vim.cmd("edit " .. pkg_dir)
++        end
++      end,
++    },
++  })
++end
++
++function M.sniper(subdir)
++  local pkg = Utils.find_package_root()
++  if not pkg then
++    return
++  end
++  local target = pkg .. "/" .. subdir
++
++  if vim.fn.isdirectory(target) == 0 then
++    vim.fn.mkdir(target, "p")
++  end
++
++  local files = vim.split(vim.fn.glob(target .. "/*"), "\n", { trimempty = true })
++  if #files == 1 then
++    vim.cmd("edit " .. files[1])
++  else
++    require("fzf-lua").files({ cwd = target, prompt = subdir .. " Files> " })
++  end
++end
++
++function M.find_files_package()
++  local pkg = Utils.find_package_root()
++  if pkg then
++    require("fzf-lua").files({ cwd = pkg, prompt = "Find in Package> " })
++  else
++    vim.notify("Not inside a ROS 2 package.", vim.log.levels.WARN)
++  end
++end
++
++function M.grep_package()
++  local pkg = Utils.find_package_root()
++  if pkg then
++    require("fzf-lua").live_grep({ cwd = pkg, prompt = "Grep in Package> " })
++  else
++    vim.notify("Not inside a ROS 2 package.", vim.log.levels.WARN)
++  end
++end
++
+ return M
+diff --git a/lua/nvim-ros2/pickers/init.lua b/lua/nvim-ros2/pickers/init.lua
+index e34a910..b5f30db 100644
+--- a/lua/nvim-ros2/pickers/init.lua
++++ b/lua/nvim-ros2/pickers/init.lua
+@@ -25,10 +25,10 @@ function M.interfaces()
+   end
+ end
+ 
+-function M.nodes()
++function M.nodes(opts)
+   local picker = M.get_picker()
+   if picker then
+-    picker.nodes()
++    picker.nodes(opts)
+   end
+ end
+ 
+@@ -53,10 +53,47 @@ function M.topics_echo()
+   end
+ end
+ 
+-function M.actions()
++function M.packages()
+   local picker = M.get_picker()
+   if picker then
+-    picker.actions()
++    picker.packages()
++  end
++end
++
++function M.sniper(subdir)
++  local picker = M.get_picker()
++  if picker then
++    picker.sniper(subdir)
++  end
++end
++
++function M.find_files_package()
++  local picker = M.get_picker()
++  if picker then
++    picker.find_files_package()
++  end
++end
++
++function M.grep_package()
++  local picker = M.get_picker()
++  if picker then
++    picker.grep_package()
++  end
++end
++
++function M.edit_cmake()
++  local Utils = require("nvim-ros2.utils")
++  local pkg = Utils.find_package_root()
++  if pkg then
++    vim.cmd("edit " .. pkg .. "/CMakeLists.txt")
++  end
++end
++
++function M.edit_package_xml()
++  local Utils = require("nvim-ros2.utils")
++  local pkg = Utils.find_package_root()
++  if pkg then
++    vim.cmd("edit " .. pkg .. "/package.xml")
+   end
+ end
+ 
+diff --git a/lua/nvim-ros2/pickers/snacks.lua b/lua/nvim-ros2/pickers/snacks.lua
+index 015a051..6783353 100644
+--- a/lua/nvim-ros2/pickers/snacks.lua
++++ b/lua/nvim-ros2/pickers/snacks.lua
+@@ -1,5 +1,5 @@
+ local M = {}
+-
++local Utils = require("nvim-ros2.utils")
+ local function get_command_output(cmd)
+   if vim.fn.executable("ros2") ~= 1 then
+     vim.notify("ros2 not found", vim.log.levels.ERROR)
+@@ -16,16 +16,39 @@ local function ros_picker(opts)
+ 
+   local items = {}
+   for _, line in ipairs(output) do
+-    table.insert(items, {
+-      text = line,
+-      item = line,
+-    })
++    table.insert(items, { text = line, item = line })
++  end
++
++  -- Sprint 5+: Dynamic Custom Actions Mapping
++  local win_keys = {}
++  local actions = {
++    confirm = function(picker, item)
++      picker:close()
++      if opts.on_select and item then
++        opts.on_select(item.text)
++      end
++    end,
++  }
++
++  if opts.custom_actions then
++    for key, def in pairs(opts.custom_actions) do
++      local action_name = "action_" .. key:gsub("%W", "")
++      win_keys[key] = { action_name, mode = { "i", "n" }, desc = def.desc }
++      actions[action_name] = function(picker, item)
++        picker:close()
++        if item and item.text then
++          def.callback(item.text)
++        end
++      end
++    end
+   end
+ 
+   Snacks.picker.pick({
+     title = opts.prompt_title,
+     items = items,
+     format = "text",
++    win = { input = { keys = win_keys } },
++    actions = actions,
+     preview = function(ctx)
+       local item = ctx.item
+       local cmd = { "ros2", opts.command, opts.mode, item.text }
+@@ -37,22 +60,21 @@ local function ros_picker(opts)
+ 
+       vim.system(cmd, { timeout = opts.timeout or 5000 }, function(result)
+         vim.schedule(function()
+-          if result.code == 124 then
+-            ctx.preview:set_lines({ "Timeout: No data received" })
+-          elseif result.stdout and result.stdout ~= "" then
+-            ctx.preview:set_lines(vim.split(result.stdout, "\n"))
+-            ctx.preview:highlight({ lang = "yaml" })
+-          elseif result.stderr and result.stderr ~= "" then
+-            ctx.preview:set_lines(vim.split(result.stderr, "\n"))
+-          else
+-            ctx.preview:set_lines({ "No data" })
+-          end
++          pcall(function()
++            if result.code == 124 then
++              ctx.preview:set_lines({ "Timeout: No data received" })
++            elseif result.stdout and result.stdout ~= "" then
++              ctx.preview:set_lines(vim.split(result.stdout, "\n", { trimempty = true }))
++              ctx.preview:highlight({ lang = "yaml" })
++            elseif result.stderr and result.stderr ~= "" then
++              ctx.preview:set_lines(vim.split(result.stderr, "\n", { trimempty = true }))
++            else
++              ctx.preview:set_lines({ "No data" })
++            end
++          end)
+         end)
+       end)
+     end,
+-    confirm = function()
+-      -- No-op as per original requirement
+-    end,
+   })
+ end
+ 
+@@ -92,14 +114,29 @@ function M.interfaces()
+   })
+ end
+ 
+-function M.nodes()
+-  ros_picker({
++function M.nodes(opts)
++  opts = opts or {}
++  local node_opts = vim.tbl_extend("force", {
+     prompt_title = "Active Nodes",
+     system_cmd = { "ros2", "node", "list" },
+     command = "node",
+     mode = "info",
+     args = "--include-hidden",
+-  })
++    custom_actions = {
++      ["<C-t>"] = {
++        desc = "Attach ROS Tuner",
++        callback = function(node_name)
++          if require("nvim-ros2.config").options.tuner then
++            require("nvim-ros2.tuner").attach_node(node_name)
++          else
++            vim.notify("ROS Tuner is disabled in config.", vim.log.levels.WARN)
++          end
++        end,
++      },
++    },
++  }, opts)
++
++  ros_picker(node_opts)
+ end
+ 
+ function M.actions()
+@@ -143,4 +180,105 @@ function M.topics_echo()
+   })
+ end
+ 
++function M.packages()
++  local ws_root = Utils.get_workspace_root(0)
++
++  Snacks.picker.files({
++    title = "ROS 2 Packages",
++    format = "text",
++    cmd = vim.fn.executable("fd") == 1 and "fd" or "find",
++    args = vim.fn.executable("fd") == 1
++        and { "^package.xml$", "--exclude", "build", "--exclude", "install", "--exclude", "log" }
++      or { "-name", "package.xml", "-not", "-path", "*/install/*", "-not", "-path", "*/build/*" },
++
++    transform = function(item)
++      local xml_path = item.file
++      local pkg_dir = vim.fs.dirname(xml_path)
++      local pkg_name = vim.fs.basename(pkg_dir)
++
++      -- Parse XML for actual package name
++      local f = io.open(xml_path, "r")
++      if f then
++        local content = f:read("*a")
++        f:close()
++        pkg_name = content:match("<name>%s*(.-)%s*</name>") or pkg_name
++      end
++
++      item.pkg_dir = pkg_dir
++      item.text = pkg_name .. " 📦"
++      -- Preview the README if it exists
++      for _, v in ipairs({ "/README.md", "/README" }) do
++        if vim.uv.fs_stat(pkg_dir .. v) then
++          item.file = pkg_dir .. v
++          break
++        end
++      end
++      return item
++    end,
++    actions = {
++      confirm = function(picker, item)
++        picker:close()
++        if item and item.pkg_dir then
++          -- Default to Oil if available, else Lexplore
++          if pcall(require, "oil") then
++            require("oil").open(item.pkg_dir)
++          else
++            vim.cmd("Lexplore " .. item.pkg_dir)
++          end
++        end
++      end,
++    },
++  })
++end
++
++function M.sniper(subdir)
++  local pkg = Utils.find_package_root()
++  if not pkg then
++    return
++  end
++  local target = pkg .. "/" .. subdir
++
++  if vim.fn.isdirectory(target) == 0 then
++    vim.fn.mkdir(target, "p")
++    vim.notify("Created missing directory: " .. subdir, vim.log.levels.INFO)
++  end
++
++  local files = vim.split(vim.fn.glob(target .. "/*"), "\n", { trimempty = true })
++  if #files == 1 then
++    vim.cmd("edit " .. files[1])
++  elseif #files > 1 then
++    Snacks.picker.files({ cwd = target, title = subdir .. " Files" })
++  else
++    if pcall(require, "oil") then
++      require("oil").open(target)
++    else
++      vim.cmd("Lexplore " .. target)
++    end
++  end
++end
++
++function M.find_files_package()
++  local pkg = Utils.find_package_root()
++  if pkg then
++    Snacks.picker.files({
++      cwd = pkg,
++      title = "Find in Package: " .. vim.fs.basename(pkg),
++    })
++  else
++    vim.notify("Not inside a ROS 2 package.", vim.log.levels.WARN)
++  end
++end
++
++function M.grep_package()
++  local pkg = Utils.find_package_root()
++  if pkg then
++    Snacks.picker.grep({
++      cwd = pkg,
++      title = "Grep in Package: " .. vim.fs.basename(pkg),
++    })
++  else
++    vim.notify("Not inside a ROS 2 package.", vim.log.levels.WARN)
++  end
++end
++
+ return M
+diff --git a/lua/nvim-ros2/pickers/telescope.lua b/lua/nvim-ros2/pickers/telescope.lua
+index 0a9ac08..14d1ec4 100644
+--- a/lua/nvim-ros2/pickers/telescope.lua
++++ b/lua/nvim-ros2/pickers/telescope.lua
+@@ -2,9 +2,9 @@
+ local finders = require("telescope.finders")
+ local pickers = require("telescope.pickers")
+ local conf = require("telescope.config").values
+-
+--- Local previewers
++local Utils = require("nvim-ros2.utils")
+ local ros_previewers = require("nvim-ros2.telescope.previewers")
++-- Local previewers
+ 
+ local M = {}
+ 
+@@ -57,7 +57,6 @@ function M.interfaces()
+     :find()
+ end
+ 
+---- Wrapper for a Telescope picker to select ROS 2 elements
+ local function ros_picker(opts)
+   local command_output = nil
+   if vim.fn.executable("ros2") == 1 then
+@@ -66,31 +65,50 @@ local function ros_picker(opts)
+     vim.notify("ros2 not found", vim.log.levels.ERROR)
+     return
+   end
+-  pickers
++
++  require("telescope.pickers")
+     .new(opts, {
+-      finder = finders.new_table({
++      finder = require("telescope.finders").new_table({
+         results = command_output,
+         entry_maker = opts.entry_maker,
+       }),
+-      sorter = conf.generic_sorter(),
+-      previewer = ros_previewers.preview_elements(opts),
++      sorter = require("telescope.config").values.generic_sorter(),
++      previewer = require("nvim-ros2.telescope.previewers").preview_elements(opts),
+       dynamic_filter = true,
+-      attach_mappings = function(_, map)
+-        -- Disable enter behavior
+-        map("i", "<CR>", function(_) end)
+-        map("n", "<CR>", function(_) end)
++      attach_mappings = function(prompt_bufnr, map)
++        -- Sprint 5+: Inject custom actions (like <C-t> for Tuner)
++        if opts.custom_actions then
++          for key, def in pairs(opts.custom_actions) do
++            map({ "i", "n" }, key, function()
++              local selection = require("telescope.actions.state").get_selected_entry()
++              require("telescope.actions").close(prompt_bufnr)
++              if selection then
++                def.callback(selection[1])
++              end
++            end, { desc = def.desc })
++          end
++        end
++
++        if opts.on_select then
++          require("telescope.actions").select_default:replace(function()
++            local selection = require("telescope.actions.state").get_selected_entry()
++            require("telescope.actions").close(prompt_bufnr)
++            opts.on_select(selection[1])
++          end)
++        else
++          map("i", "<CR>", function(_) end)
++          map("n", "<CR>", function(_) end)
++        end
+         return true
+       end,
+     })
+     :find()
+ end
+ 
+--- Picker of active ROS 2 Nodes
+-function M.nodes()
++function M.nodes(opts)
++  opts = opts or {}
+   local system_cmd = { "ros2", "node", "list" }
+-
+-  -- Process command output
+-  local opts = {
++  local node_opts = vim.tbl_extend("force", {
+     preview_title = "Node Info",
+     prompt_title = "Search",
+     results_title = "Active Nodes",
+@@ -98,8 +116,21 @@ function M.nodes()
+     command = "node",
+     mode = "info",
+     args = "--include-hidden",
+-  }
+-  ros_picker(opts)
++    custom_actions = {
++      ["<C-t>"] = {
++        desc = "Attach ROS Tuner",
++        callback = function(node_name)
++          if require("nvim-ros2.config").options.tuner then
++            require("nvim-ros2.tuner").attach_node(node_name)
++          else
++            vim.notify("ROS Tuner is disabled in config.", vim.log.levels.WARN)
++          end
++        end,
++      },
++    },
++  }, opts)
++
++  ros_picker(node_opts)
+ end
+ 
+ -- Picker of active ROS 2 actions
+@@ -169,4 +200,70 @@ function M.topics_echo()
+   ros_picker(opts)
+ end
+ 
++function M.packages()
++  local ws_root = Utils.get_workspace_root(0)
++  require("telescope.builtin").find_files({
++    prompt_title = "ROS 2 Packages",
++    cwd = ws_root,
++    find_command = { "fd", "^package.xml$", "--exclude", "build", "--exclude", "install" },
++    attach_mappings = function(_, map)
++      map("i", "<CR>", function(prompt_bufnr)
++        local selection = require("telescope.actions.state").get_selected_entry()
++        require("telescope.actions").close(prompt_bufnr)
++        local pkg_dir = vim.fs.dirname(ws_root .. "/" .. selection.value)
++        if pcall(require, "oil") then
++          require("oil").open(pkg_dir)
++        else
++          vim.cmd("edit " .. pkg_dir)
++        end
++      end)
++      return true
++    end,
++  })
++end
++
++function M.sniper(subdir)
++  local pkg = Utils.find_package_root()
++  if not pkg then
++    return
++  end
++  local target = pkg .. "/" .. subdir
++
++  -- Create dir if missing
++  if vim.fn.isdirectory(target) == 0 then
++    vim.fn.mkdir(target, "p")
++  end
++
++  local files = vim.split(vim.fn.glob(target .. "/*"), "\n", { trimempty = true })
++  if #files == 1 then
++    vim.cmd("edit " .. files[1])
++  else
++    require("telescope.builtin").find_files({ cwd = target, prompt_title = subdir .. " Files" })
++  end
++end
++
++function M.find_files_package()
++  local pkg = Utils.find_package_root()
++  if pkg then
++    require("telescope.builtin").find_files({
++      cwd = pkg,
++      prompt_title = "Find in Package: " .. vim.fs.basename(pkg),
++    })
++  else
++    vim.notify("Not inside a ROS 2 package.", vim.log.levels.WARN)
++  end
++end
++
++function M.grep_package()
++  local pkg = Utils.find_package_root()
++  if pkg then
++    require("telescope.builtin").live_grep({
++      cwd = pkg,
++      prompt_title = "Grep in Package: " .. vim.fs.basename(pkg),
++    })
++  else
++    vim.notify("Not inside a ROS 2 package.", vim.log.levels.WARN)
++  end
++end
++
+ return M
+diff --git a/lua/nvim-ros2/tuner/engine.lua b/lua/nvim-ros2/tuner/engine.lua
+new file mode 100644
+index 0000000..126a076
+--- /dev/null
++++ b/lua/nvim-ros2/tuner/engine.lua
+@@ -0,0 +1,228 @@
++local Utils = require("nvim-ros2.utils")
++local M = {}
++
++local function get_yaml_value_type(value_node)
++  local actual_node = value_node
++  while
++    actual_node
++    and (
++      actual_node:type() == "flow_node"
++      or actual_node:type() == "block_node"
++      or actual_node:type() == "plain_scalar"
++    )
++  do
++    local child = actual_node:named_child(0)
++    if not child then
++      break
++    end
++    actual_node = child
++  end
++  local t = actual_node:type()
++  if t == "integer_scalar" then
++    return "integer"
++  elseif t == "float_scalar" then
++    return "double"
++  elseif t == "boolean_scalar" then
++    return "boolean"
++  elseif t == "string_scalar" then
++    return "string"
++  elseif t == "flow_sequence" or t == "block_sequence" then
++    return "array"
++  end
++  return t
++end
++
++--- Resolves the parameter name, node namespace, and value under the cursor.
++function M.resolve_parameter_context(bufnr, pos)
++  bufnr = bufnr or vim.api.nvim_get_current_buf()
++  if not pos then
++    local winid = vim.fn.bufwinid(bufnr)
++    if winid == -1 then
++      return nil
++    end
++    local cursor = vim.api.nvim_win_get_cursor(winid)
++    pos = { cursor[1] - 1, cursor[2] }
++  end
++  local node = vim.treesitter.get_node({ bufnr = bufnr, pos = pos })
++  if not node then
++    return nil
++  end
++
++  local path_keys, current, value_node, value_type = {}, node, nil, "unknown"
++  while current do
++    if current:type() == "block_mapping_pair" then
++      local key_node = current:field("key")[1]
++      if key_node then
++        table.insert(path_keys, 1, vim.treesitter.get_node_text(key_node, bufnr))
++      end
++      if not value_node then
++        value_node = current:field("value")[1]
++        if value_node then
++          value_type = get_yaml_value_type(value_node)
++        end
++      end
++    end
++    current = current:parent()
++  end
++
++  if #path_keys < 2 or value_type == "unknown" or value_type:match("mapping") then
++    return nil
++  end
++
++  local ros_param_idx = nil
++  for i, key in ipairs(path_keys) do
++    if key == "ros__parameters" then
++      ros_param_idx = i
++      break
++    end
++  end
++  if not ros_param_idx or ros_param_idx == #path_keys then
++    return nil
++  end
++
++  local param_parts = {}
++  for i = ros_param_idx + 1, #path_keys do
++    table.insert(param_parts, path_keys[i])
++  end
++  local param_name = table.concat(param_parts, ".")
++  if param_name == "" then
++    return nil
++  end
++
++  return path_keys[1],
++    param_name,
++    value_type,
++    value_node and vim.treesitter.get_node_text(value_node, bufnr) or "unknown"
++end
++
++function M.build_nested_tree(flat_params)
++  local tree = {}
++  for p_name, p_val in pairs(flat_params) do
++    local parts = vim.split(p_name, "%.")
++    local curr = tree
++    for k = 1, #parts - 1 do
++      curr[parts[k]] = curr[parts[k]] or {}
++      curr = curr[parts[k]]
++    end
++    curr[parts[#parts]] = p_val
++  end
++  return tree
++end
++
++function M.compute_tree_insertions(
++  tree,
++  start_idx,
++  end_idx,
++  parent_indent_str,
++  current_lines,
++  pending_insertions
++)
++  local keys = vim.tbl_keys(tree)
++  table.sort(keys)
++  local child_indent_str = parent_indent_str .. "  "
++  for idx = start_idx, end_idx do
++    local l = current_lines[idx]
++    if l and not l:match("^%s*#") and not l:match("^%s*$") then
++      local detect_indent = l:match("^(%s*)")
++      if #detect_indent > #parent_indent_str then
++        child_indent_str = detect_indent
++        break
++      end
++    end
++  end
++  for _, k in ipairs(keys) do
++    local v, found_idx = tree[k], nil
++    local escaped_k = k:gsub("([%.%+%-%*%?%[%]%^%$%(%)%%])", "%%%1")
++    for idx = start_idx, end_idx do
++      if
++        current_lines[idx]
++        and not current_lines[idx]:match("^%s*#")
++        and current_lines[idx]:match("^" .. child_indent_str .. escaped_k .. ":")
++      then
++        found_idx = idx
++        break
++      end
++    end
++    if found_idx then
++      local child_start = found_idx + 1
++      local child_end = child_start - 1
++      for idx = child_start, end_idx do
++        if
++          current_lines[idx]
++          and not current_lines[idx]:match("^%s*#")
++          and not current_lines[idx]:match("^%s*$")
++        then
++          if #current_lines[idx]:match("^(%s*)") <= #child_indent_str then
++            break
++          end
++        end
++        child_end = idx
++      end
++      if type(v) == "table" then
++        M.compute_tree_insertions(
++          v,
++          child_start,
++          child_end,
++          child_indent_str,
++          current_lines,
++          pending_insertions
++        )
++      end
++    else
++      local dict_key = end_idx .. "_" .. #parent_indent_str
++      pending_insertions[dict_key] = pending_insertions[dict_key]
++        or { idx = end_idx, depth = #parent_indent_str, lines = {}, marks = {} }
++      local function build_lines(sub_tree, sub_indent)
++        local sub_keys = vim.tbl_keys(sub_tree)
++        table.sort(sub_keys)
++        for _, sk in ipairs(sub_keys) do
++          local sv = sub_tree[sk]
++          if type(sv) == "table" then
++            table.insert(pending_insertions[dict_key].lines, sub_indent .. sk .. ":")
++            table.insert(pending_insertions[dict_key].marks, false)
++            build_lines(sv, sub_indent .. "  ")
++          else
++            table.insert(pending_insertions[dict_key].lines, sub_indent .. sk .. ": " .. sv)
++            table.insert(pending_insertions[dict_key].marks, true)
++          end
++        end
++      end
++      if type(v) == "table" then
++        table.insert(pending_insertions[dict_key].lines, child_indent_str .. k .. ":")
++        table.insert(pending_insertions[dict_key].marks, false)
++        build_lines(v, child_indent_str .. "  ")
++      else
++        table.insert(pending_insertions[dict_key].lines, child_indent_str .. k .. ": " .. v)
++        table.insert(pending_insertions[dict_key].marks, true)
++      end
++    end
++  end
++end
++
++function M.parse_ros2_dump(dump_text, active_node)
++  local live_params = {}
++  local path_stack = {}
++  for line in dump_text:gmatch("[^\r\n]+") do
++    local indent, key, val = line:match("^(%s*)['\"]?([%w_%-%.]+)['\"]?:%s*(.*)$")
++    if key then
++      local depth = math.floor(#indent / 2) + 1
++      path_stack[depth] = key
++      if val ~= "" and val ~= nil then
++        -- RESTORED: Strip inline YAML comments like `1.0 # default`
++        local clean_val = val:match("^(.-)%s+#.*$") or val:match("^(.-)%s*$")
++        local full_path = {}
++        for i = 2, depth do
++          if path_stack[i] ~= "ros__parameters" then
++            table.insert(full_path, path_stack[i])
++          end
++        end
++        if #full_path > 0 then
++          live_params[active_node .. ":" .. table.concat(full_path, ".")] = clean_val
++        end
++      end
++    end
++  end
++  return live_params
++end
++
++return M
+diff --git a/lua/nvim-ros2/tuner/init.lua b/lua/nvim-ros2/tuner/init.lua
+new file mode 100644
+index 0000000..8d15446
+--- /dev/null
++++ b/lua/nvim-ros2/tuner/init.lua
+@@ -0,0 +1,871 @@
++local M = {}
++local RosApi = require("nvim-ros2.api.ros2")
++local Utils = require("nvim-ros2.utils")
++local Engine = require("nvim-ros2.tuner.engine")
++local UI = require("nvim-ros2.tuner.ui")
++local Config = require("nvim-ros2.config")
++-- State Management
++M._cache = {}
++local buffer_states = {}
++local param_metadata_cache = {}
++
++local SYSTEMIC_PARAMS = {
++  use_sim_time = true,
++  qos_overrides = true,
++  start_type_description_service = true,
++  automatically_declare_parameters_from_overrides = true,
++  allow_undeclared_parameters = true,
++}
++
++local function is_systemic(param_name)
++  if SYSTEMIC_PARAMS[param_name] then
++    return true
++  end
++  if param_name:match("^qos_overrides") then
++    return true
++  end
++  return false
++end
++
++local function get_state(bufnr)
++  if not buffer_states[bufnr] then
++    buffer_states[bufnr] =
++      { last_line = "", last_val = "", last_param = "", last_row = -1, debounce = nil }
++  end
++  return buffer_states[bufnr]
++end
++
++-- Global Cache Cleanup
++vim.api.nvim_create_autocmd("BufWritePost", {
++  pattern = { "*.yaml", "*.param" },
++  callback = function(args)
++    for k, _ in pairs(param_metadata_cache) do
++      param_metadata_cache[k] = nil
++    end
++    local written = vim.api.nvim_buf_get_name(args.buf)
++    for ws_root, _ in pairs(M._cache) do
++      if written:sub(1, #ws_root) == ws_root then
++        M._cache[ws_root] = nil
++      end
++    end
++  end,
++})
++
++-- =====================================================================
++-- Lifecycle & Orchestration
++-- =====================================================================
++
++function M.start_session()
++  local bufnr = vim.api.nvim_get_current_buf()
++  if vim.b[bufnr].ros_tuner_active then
++    vim.notify("ROS Tuner already active.", vim.log.levels.WARN)
++    return
++  end
++  vim.notify("🔍 Scanning DDS for YAML matches...", vim.log.levels.INFO)
++  M.match_file_to_node(bufnr, function(mappings)
++    if #mappings == 0 then
++      vim.notify("No live nodes matched. Operating Offline.", vim.log.levels.WARN)
++      M.setup_scratch_buffer(bufnr, {})
++    else
++      local function resolve(idx)
++        if idx > #mappings then
++          return M.setup_scratch_buffer(bufnr, mappings)
++        end
++        local map = mappings[idx]
++        if map.is_instanced then
++          vim.ui.select(
++            map.tied,
++            { prompt = "Select instance for '" .. map.yaml_root .. "':" },
++            function(choice)
++              if choice then
++                map.fqn = choice
++                resolve(idx + 1)
++              end
++            end
++          )
++        else
++          resolve(idx + 1)
++        end
++      end
++      resolve(1)
++    end
++  end)
++end
++
++function M.attach_node(target_node)
++  M.match_node_to_file(target_node, function(candidates)
++    if #candidates == 0 then
++      M.open_synthetic_proxy(target_node)
++    elseif #candidates == 1 then
++      vim.cmd("edit " .. candidates[1].path)
++      vim.schedule(M.start_session)
++    else
++      vim.ui.select(candidates, {
++        prompt = "Select config for " .. target_node .. ":",
++        format_item = function(i)
++          return string.format("[%d] %s", i.score, vim.fs.basename(i.path))
++        end,
++      }, function(choice)
++        if choice then
++          vim.cmd("edit " .. candidates[1].path)
++          vim.schedule(M.start_session)
++        end
++      end)
++    end
++  end)
++end
++
++function M.open_synthetic_proxy(node_name)
++  vim.notify("⏳ Connecting to live node: " .. node_name .. "...", vim.log.levels.INFO)
++  RosApi.dump_params(node_name, function(dump)
++    if not dump then
++      vim.notify("Failed to dump parameters for " .. node_name, vim.log.levels.ERROR)
++      return
++    end
++
++    local scratch = vim.api.nvim_create_buf(false, true)
++    local open_mode = Config.options.tuner_open_mode or "split"
++
++    if open_mode == "tab" then
++      vim.cmd("tabnew")
++    elseif open_mode == "split" or open_mode == "vsplit" then
++      vim.cmd("vsplit")
++    end
++
++    vim.api.nvim_set_current_buf(scratch)
++    vim.bo[scratch].buftype, vim.bo[scratch].bufhidden, vim.bo[scratch].filetype =
++      "nofile", "wipe", "yaml"
++    local safe_node_name = node_name:gsub("^/", ""):gsub("/", "_")
++    pcall(vim.api.nvim_buf_set_name, scratch, "ROS_LIVE_" .. safe_node_name)
++    local dump_root_key = Utils.get_base_name(Utils.normalize_fqn(node_name))
++    vim.b[scratch].ros_mappings = { [dump_root_key] = node_name }
++    vim.b[scratch].is_synthetic = true
++
++    local lines = vim.split(dump, "\n", { trimempty = true })
++    vim.api.nvim_buf_set_lines(scratch, 0, -1, false, lines)
++
++    local parser = vim.treesitter.get_parser(scratch, "yaml")
++    if parser then
++      parser:parse(true)
++    end
++
++    for row, line in ipairs(lines) do
++      if line:find("[^%s]") then
++        local _, p_name, _, val =
++          Engine.resolve_parameter_context(scratch, { row - 1, line:find("[^%s]") - 1 })
++        if p_name then
++          UI.set_sync_extmark(scratch, row - 1, "  # [Live: " .. val .. "]", nil, "synced")
++        end
++      end
++    end
++
++    M.attach_to_buffer(scratch)
++    vim.bo[scratch].modified = false
++    vim.notify("🔗 Attached to proxy for " .. node_name, vim.log.levels.INFO)
++  end)
++end
++
++function M.setup_scratch_buffer(orig_buf, mappings)
++  local orig_lines = vim.api.nvim_buf_get_lines(orig_buf, 0, -1, false)
++  local orig_win = vim.api.nvim_get_current_win()
++  local orig_name = vim.fs.basename(vim.api.nvim_buf_get_name(orig_buf))
++
++  local scratch = vim.api.nvim_create_buf(false, true)
++  local open_mode = Config.options.tuner_open_mode or "split"
++
++  if open_mode == "tab" then
++    vim.cmd("tabnew")
++  elseif open_mode == "split" or open_mode == "vsplit" then
++    vim.cmd("vsplit")
++  end
++
++  vim.api.nvim_set_current_buf(scratch)
++  vim.bo[scratch].buftype, vim.bo[scratch].bufhidden, vim.bo[scratch].filetype =
++    "acwrite", "wipe", "yaml"
++  pcall(vim.api.nvim_buf_set_name, scratch, "ROS_TUNER_" .. orig_name)
++  local mappings_dict = {}
++  for _, m in ipairs(mappings) do
++    mappings_dict[m.yaml_root] = m.fqn
++  end
++  vim.b[scratch].ros_mappings = mappings_dict
++
++  local old_ul = vim.bo[scratch].undolevels
++  vim.bo[scratch].undolevels = -1
++  vim.api.nvim_buf_set_lines(scratch, 0, -1, false, orig_lines)
++  vim.bo[scratch].undolevels = old_ul
++
++  local parser = vim.treesitter.get_parser(scratch, "yaml")
++  if parser then
++    parser:parse(true)
++  end
++
++  for row, line in ipairs(orig_lines) do
++    local col = line:find("[^%s]")
++    if col then
++      local _, p_name, _, val = Engine.resolve_parameter_context(scratch, { row - 1, col - 1 })
++      if p_name then
++        UI.set_sync_extmark(scratch, row - 1, "  # [File: " .. val .. "]", nil, "offline")
++      end
++    end
++  end
++
++  M.attach_to_buffer(scratch)
++  M.setup_crucible_autocmds(scratch, orig_buf, orig_win)
++
++  if #mappings > 0 then
++    M.global_resync(scratch)
++  end
++end
++
++function M.setup_crucible_autocmds(scratch, orig_buf, orig_win)
++  local group = vim.api.nvim_create_augroup("RosTunerLifecycle_" .. scratch, { clear = true })
++  vim.api.nvim_create_autocmd({ "BufDelete", "BufUnload", "BufWipeout" }, {
++    group = group,
++    buffer = orig_buf,
++    callback = function()
++      vim.schedule(function()
++        pcall(vim.api.nvim_buf_delete, scratch, { force = true })
++      end)
++    end,
++  })
++  vim.api.nvim_create_autocmd("WinClosed", {
++    group = group,
++    pattern = tostring(orig_win),
++    callback = function()
++      vim.schedule(function()
++        pcall(vim.api.nvim_buf_delete, scratch, { force = true })
++      end)
++    end,
++  })
++  vim.api.nvim_create_autocmd("BufWriteCmd", {
++    group = group,
++    buffer = scratch,
++    callback = function()
++      if vim.b[scratch].crucible_active then
++        return
++      end
++
++      -- Check if original buffer is currently visible
++      local target_win = nil
++      for _, win in ipairs(vim.api.nvim_list_wins()) do
++        if vim.api.nvim_win_get_buf(win) == orig_buf then
++          target_win = win
++          break
++        end
++      end
++
++      -- If hidden (because of 'hide' mode), forcefully split to reveal it side-by-side
++      if not target_win then
++        vim.cmd("vsplit")
++        vim.api.nvim_set_current_buf(orig_buf)
++        target_win = vim.api.nvim_get_current_win()
++        vim.cmd("wincmd p") -- Return focus to the scratch buffer
++      end
++
++      vim.b[scratch].crucible_active = true
++      vim.api.nvim_buf_clear_namespace(scratch, vim.api.nvim_create_namespace("ros_tuner"), 0, -1)
++
++      -- Enter Vimdiff
++      vim.cmd("diffthis")
++      vim.opt_local.foldenable = false
++      vim.api.nvim_set_current_win(target_win)
++      vim.cmd("diffthis")
++      vim.opt_local.foldenable = false
++
++      -- Ensure focus is returned to the scratch buffer
++      for _, w in ipairs(vim.api.nvim_list_wins()) do
++        if vim.api.nvim_win_get_buf(w) == scratch then
++          vim.api.nvim_set_current_win(w)
++          break
++        end
++      end
++
++      vim.bo[scratch].modified = false
++      vim.notify(
++        "⚔️ Crucible Mode: Use 'dp' to push tuned values to the original file.",
++        vim.log.levels.WARN
++      )
++    end,
++  })
++end
++
++function M.global_resync(bufnr, cb)
++  bufnr = bufnr or vim.api.nvim_get_current_buf()
++  local mappings = vim.b[bufnr].ros_mappings or {}
++  local global_live = {}
++  local pending = 0
++  for _, _ in pairs(mappings) do
++    pending = pending + 1
++  end
++
++  if pending == 0 then
++    return cb and cb()
++  end
++
++  for root, fqn in pairs(mappings) do
++    RosApi.dump_params(fqn, function(dump)
++      pending = pending - 1
++      if dump then
++        local params = Engine.parse_ros2_dump(dump, root)
++        for k, v in pairs(params) do
++          global_live[k] = v
++        end
++      end
++      if pending == 0 then
++        M.reconcile_live_parameters(bufnr, global_live)
++        if cb then
++          cb()
++        end
++      end
++    end)
++  end
++end
++
++function M.reconcile_live_parameters(scratch_buf, global_live_params)
++  local parser = vim.treesitter.get_parser(scratch_buf, "yaml")
++  if parser then
++    parser:parse(true)
++  end
++
++  local lines = vim.api.nvim_buf_get_lines(scratch_buf, 0, -1, false)
++  local old_ul = vim.bo[scratch_buf].undolevels
++  vim.bo[scratch_buf].undolevels = -1
++
++  local matched_keys, missing_params, synced_count, injected_count = {}, {}, 0, 0
++
++  -- Phase 1: Drift Detection
++  for row, line in ipairs(lines) do
++    local col = line:find("[^%s]")
++    if col then
++      local node, p_name, _, val =
++        Engine.resolve_parameter_context(scratch_buf, { row - 1, col - 1 })
++      if node and p_name then
++        local key = node .. ":" .. p_name
++        matched_keys[key] = true
++        local live = global_live_params[key]
++        if live then
++          if live ~= val then
++            local escaped_val = val:gsub("([%.%+%-%*%?%[%]%^%$%(%)%%])", "%%%1")
++            local safe_live = live:gsub("%%", "%%%%")
++            local new_line =
++              line:gsub("(:%s*)" .. escaped_val .. "(%s*.*)$", "%1" .. safe_live .. "%2")
++            if new_line ~= line then
++              vim.api.nvim_buf_set_lines(scratch_buf, row - 1, row, false, { new_line })
++              synced_count = synced_count + 1
++            end
++          end
++          UI.set_sync_extmark(scratch_buf, row - 1, "  # [File: " .. val .. "]", nil, "synced")
++        else
++          UI.set_sync_extmark(scratch_buf, row - 1, "  # [File: " .. val .. "]", nil, "unused")
++        end
++      end
++    end
++  end
++
++  -- Phase 2: Missing Injection
++  for composite_key, live_val in pairs(global_live_params) do
++    if not matched_keys[composite_key] then
++      local node, param = composite_key:match("^(.-):(.+)$")
++      if not is_systemic(param) then
++        missing_params[node] = missing_params[node] or {}
++        missing_params[node][param] = live_val
++      end
++    end
++  end
++
++  local current_lines = vim.api.nvim_buf_get_lines(scratch_buf, 0, -1, false)
++  local current_node, offset = nil, 0
++
++  for i, line in ipairs(current_lines) do
++    local possible_node = line:match("^/?([%w_%-%.%/]+):")
++    if possible_node and possible_node ~= "ros__parameters" then
++      current_node = possible_node
++    elseif line:match("^%s*ros__parameters:") and current_node and missing_params[current_node] then
++      local block_end_idx = i
++      for k = i + 1, #current_lines do
++        if current_lines[k]:match("^[%w_%-%.%/%*]+:") then
++          break
++        end
++        block_end_idx = k
++      end
++
++      local base_indent_str = line:match("^(%s*)")
++      local missing_tree = Engine.build_nested_tree(missing_params[current_node])
++      local pending_insertions = {}
++      Engine.compute_tree_insertions(
++        missing_tree,
++        i + 1,
++        block_end_idx,
++        base_indent_str,
++        current_lines,
++        pending_insertions
++      )
++
++      local insertion_list = {}
++      for _, v in pairs(pending_insertions) do
++        table.insert(insertion_list, v)
++      end
++      table.sort(insertion_list, function(a, b)
++        return a.idx ~= b.idx and a.idx > b.idx or a.depth < b.depth
++      end)
++
++      local node_added_lines = 0
++      for _, data in ipairs(insertion_list) do
++        local insert_pos = data.idx + offset
++        vim.api.nvim_buf_set_lines(scratch_buf, insert_pos, insert_pos, false, data.lines)
++        for j, mark_needed in ipairs(data.marks) do
++          if mark_needed then
++            UI.set_sync_extmark(
++              scratch_buf,
++              insert_pos + j - 1,
++              "  # [Discovered]",
++              nil,
++              "discovered"
++            )
++            injected_count = injected_count + 1
++          end
++        end
++        node_added_lines = node_added_lines + #data.lines
++      end
++      offset = offset + node_added_lines
++      missing_params[current_node] = nil
++    end
++  end
++
++  vim.bo[scratch_buf].modified = false
++  vim.bo[scratch_buf].undolevels = old_ul
++  if synced_count > 0 or injected_count > 0 then
++    vim.notify(
++      string.format("✅ Sync Complete: %d drifted, %d discovered!", synced_count, injected_count),
++      vim.log.levels.WARN
++    )
++  end
++end
++
++-- =====================================================================
++-- Event Loops & Proxy Hardware
++-- =====================================================================
++
++function M.attach_to_buffer(bufnr)
++  local group = vim.api.nvim_create_augroup("RosTuner_" .. bufnr, { clear = true })
++  vim.b[bufnr].ros_tuner_active = true
++
++  vim.api.nvim_create_autocmd("InsertEnter", {
++    group = group,
++    buffer = bufnr,
++    callback = function()
++      local state = get_state(bufnr)
++      state.last_line = vim.api.nvim_get_current_line()
++      state.last_row = vim.api.nvim_win_get_cursor(0)[1]
++      local _, _, _, val = Engine.resolve_parameter_context(bufnr)
++      state.last_val = val
++    end,
++  })
++
++  vim.api.nvim_create_autocmd("InsertLeave", {
++    group = group,
++    buffer = bufnr,
++    callback = function()
++      local state = get_state(bufnr)
++      if vim.api.nvim_win_get_cursor(0)[1] ~= state.last_row then
++        return
++      end
++      if vim.api.nvim_get_current_line() == state.last_line then
++        return
++      end
++
++      local node, param, type, val = Engine.resolve_parameter_context(bufnr)
++      local fqn = vim.b[bufnr].ros_mappings and vim.b[bufnr].ros_mappings[node] or node
++      if fqn and param and val ~= "unknown" and val ~= state.last_val then
++        RosApi.set_param(fqn, param, type, val, function()
++          state.last_val = val
++          UI.set_sync_extmark(bufnr, state.last_row - 1, nil, nil, "synced")
++        end)
++      end
++    end,
++  })
++
++  vim.api.nvim_create_autocmd("CursorMoved", {
++    group = group,
++    buffer = bufnr,
++    callback = function()
++      local state = get_state(bufnr)
++      if state.debounce then
++        state.debounce:stop()
++        if not state.debounce:is_closing() then
++          state.debounce:close()
++        end
++      end
++
++      state.debounce = vim.uv.new_timer()
++      state.debounce:start(
++        300,
++        0,
++        vim.schedule_wrap(function()
++          if not vim.api.nvim_buf_is_valid(bufnr) then
++            return
++          end
++
++          local captured_row = vim.api.nvim_win_get_cursor(0)[1] - 1
++          local node, param, _, val = Engine.resolve_parameter_context(bufnr)
++          local fqn = vim.b[bufnr].ros_mappings and vim.b[bufnr].ros_mappings[node] or node
++
++          if fqn and param and param ~= state.last_param then
++            state.last_param = param
++
++            local cache_key = fqn .. ":" .. param
++            if param_metadata_cache[cache_key] and param_metadata_cache[cache_key].range then
++              UI.set_sync_extmark(
++                bufnr,
++                captured_row,
++                nil,
++                " | Range: " .. param_metadata_cache[cache_key].range,
++                "synced"
++              )
++              return
++            end
++
++            RosApi.get_param_metadata(fqn, param, function(meta)
++              param_metadata_cache[cache_key] = meta
++              if meta.range then
++                UI.set_sync_extmark(bufnr, captured_row, nil, " | Range: " .. meta.range, "synced")
++              end
++            end)
++          end
++        end)
++      )
++    end,
++  })
++
++  vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
++    group = group,
++    buffer = bufnr,
++    callback = function()
++      local state = buffer_states[bufnr]
++      if state and state.debounce then
++        state.debounce:stop()
++        if not state.debounce:is_closing() then
++          state.debounce:close()
++        end
++      end
++      buffer_states[bufnr] = nil
++      vim.b[bufnr].ros_tuner_active = false
++    end,
++  })
++end
++
++-- =====================================================================
++-- Smartmatch Discovery
++-- =====================================================================
++
++local function score_candidate(
++  live_fqn,
++  live_footprint,
++  yaml_root,
++  yaml_footprint,
++  yaml_filename,
++  footprint_available
++)
++  local norm_live = Utils.normalize_fqn(live_fqn)
++  local norm_yaml = Utils.normalize_fqn(yaml_root)
++  local live_base = Utils.get_base_name(norm_live)
++  local score, base_score, match_reason = 0, 0, ""
++
++  local matching_keys, total_yaml_keys = 0, 0
++  for k, _ in pairs(yaml_footprint) do
++    if not is_systemic(k) then
++      total_yaml_keys = total_yaml_keys + 1
++      if live_footprint[k] then
++        matching_keys = matching_keys + 1
++      end
++    end
++  end
++
++  local overlap = (footprint_available and total_yaml_keys > 0)
++      and (matching_keys / total_yaml_keys)
++    or 0
++
++  local shares_params = matching_keys > 0
++
++  if norm_yaml == norm_live then
++    base_score, match_reason = 100, "Exact FQN"
++  elseif norm_yaml:match("^/") and Utils.get_base_name(norm_yaml) == live_base then
++    base_score, match_reason = 75, "Base Name"
++  elseif norm_yaml:match("/%*%*$") then
++    local prefix = norm_yaml:gsub("/%*%*$", "")
++    if norm_live:sub(1, #prefix) == prefix and (not footprint_available or shares_params) then
++      base_score, match_reason = 60, "Scoped Wildcard"
++    end
++  elseif norm_yaml == "/**" and (not footprint_available or shares_params) then
++    base_score, match_reason = 40, "Global Wildcard"
++  end
++
++  if base_score == 0 then
++    return nil
++  end
++  score = base_score
++
++  -- RESTORED: Strict and Fuzzy Filename Scoring
++  if yaml_filename then
++    if yaml_filename == live_base then
++      score = score + 15
++      match_reason = match_reason .. " + Strict File"
++    else
++      local fuzzy_res = vim.fn.matchfuzzypos({ yaml_filename }, live_base)
++      if fuzzy_res and fuzzy_res[1] and #fuzzy_res[1] > 0 then
++        local fuzzy_score = fuzzy_res[3][1]
++        if fuzzy_score > 50 then
++          score = score + 5
++          match_reason = match_reason .. " + Fuzzy File"
++        end
++      end
++    end
++  end
++
++  if footprint_available and overlap >= 0.5 then
++    score = score + 10
++    match_reason = match_reason .. " + Overlap"
++  end
++
++  return {
++    score = score,
++    overlap = overlap,
++    root_key = norm_yaml,
++    fqn = norm_live,
++    base_name = live_base,
++    path = "",
++    match_reason = match_reason,
++  }
++end
++function M._evaluate_cached_workspace(ws_root, fqn, live_footprint, footprint_available)
++  local candidates, best_per_file = {}, {}
++  local match_mode = Config.options.tuner_match_mode or "smart"
++  local live_base = Utils.get_base_name(Utils.normalize_fqn(fqn))
++
++  for path, data in pairs(M._cache[ws_root].files) do
++    local filename = vim.fs.basename(path):gsub("%.yaml$", ""):gsub("%.param$", "")
++
++    if match_mode == "all" then
++      -- Mode: ALL - Bypass parsing entirely and return every YAML file in the workspace
++      table.insert(candidates, {
++        score = 1,
++        overlap = 0,
++        path = path,
++        match_reason = "Mode: All Files",
++      })
++    else
++      for _, yaml_root in ipairs(data.root_keys) do
++        if match_mode == "simple" then
++          -- Mode: SIMPLE - Check if the base name of the node matches the YAML root key
++          local yaml_base = Utils.get_base_name(Utils.normalize_fqn(yaml_root))
++          if yaml_base == live_base or yaml_root == "/**" then
++            if not best_per_file[path] then
++              best_per_file[path] = {
++                score = 10,
++                overlap = 0,
++                path = path,
++                match_reason = "Mode: Simple (Root Match)",
++              }
++            end
++          end
++        else
++          -- Mode: SMART - Use footprint overlap and fuzzy filename scoring
++          local cand = score_candidate(
++            fqn,
++            live_footprint,
++            yaml_root,
++            data.footprints[yaml_root] or {},
++            filename,
++            footprint_available
++          )
++          if cand then
++            cand.path = path
++            if not best_per_file[path] or cand.score > best_per_file[path].score then
++              best_per_file[path] = cand
++            end
++          end
++        end
++      end
++    end
++  end
++
++  -- Flatten the dictionary into an array (only needed for simple/smart)
++  if match_mode ~= "all" then
++    for _, cand in pairs(best_per_file) do
++      table.insert(candidates, cand)
++    end
++  end
++
++  -- Sort: Highest score -> Highest overlap -> Alphabetical path
++  table.sort(candidates, function(a, b)
++    if a.score ~= b.score then
++      return a.score > b.score
++    end
++    if a.overlap ~= b.overlap then
++      return a.overlap > b.overlap
++    end
++    return a.path < b.path
++  end)
++
++  return candidates
++end
++
++function M.match_node_to_file(fqn, cb, bufnr)
++  local ws_root = Utils.get_workspace_root(bufnr)
++  RosApi.dump_params(fqn, function(dump_out)
++    local live_footprint, footprint_available = {}, dump_out ~= nil
++    if footprint_available then
++      for line in dump_out:gmatch("[^\r\n]+") do
++        local param = line:match("^%s*['\"]?([%w_%-%.]+)['\"]?:")
++        if param and param ~= "ros__parameters" and not is_systemic(param) then
++          live_footprint[param] = true
++        end
++      end
++    end
++
++    if M._cache[ws_root] then
++      cb(M._evaluate_cached_workspace(ws_root, fqn, live_footprint, footprint_available))
++      return
++    end
++
++    local find_cmd = vim.fn.executable("fd") == 1
++        and { "fd", "-e", "yaml", "-e", "param", "-E", "build/", "-E", "install/", ".", ws_root }
++      or {
++        "find",
++        ws_root,
++        "-type",
++        "f",
++        "-not",
++        "-path",
++        ws_root .. "/build/*",
++        "-not",
++        "-path",
++        ws_root .. "/install/*",
++        "(",
++        "-name",
++        "*.yaml",
++        "-o",
++        "-name",
++        "*.param",
++        ")",
++        "-print",
++      }
++
++    vim.system(find_cmd, { text = true }, function(find_out)
++      local files = {}
++      if find_out.code == 0 and find_out.stdout ~= "" then
++        for _, f in ipairs(vim.split(find_out.stdout, "\n", { trimempty = true })) do
++          if not f:match("/build/") and not f:match("/install/") then
++            local file_data = { root_keys = {}, footprints = {} }
++            local current_root = nil
++            local has_ros_params = false -- NEW: Gatekeeper variable
++
++            local file_handle = io.open(f, "r")
++            if file_handle then
++              for line in file_handle:lines() do
++                local r_key = line:match("^([%w_%-%.%/%*]+):%s*$")
++                if r_key then
++                  current_root = r_key
++                  has_ros_params = false -- Reset for the new root key
++                elseif current_root then
++                  -- Ensure this block is actually a ROS 2 parameter block
++                  if line:match("^%s+ros__parameters:") then
++                    if not has_ros_params then
++                      table.insert(file_data.root_keys, current_root)
++                      file_data.footprints[current_root] = file_data.footprints[current_root] or {}
++                      has_ros_params = true
++                    end
++                  elseif has_ros_params then
++                    -- Only index parameters if we are safely inside a ros__parameters block
++                    local p_key = line:match("^%s+([%w_%-%.]+):")
++                    if p_key and not is_systemic(p_key) then
++                      file_data.footprints[current_root][p_key] = true
++                    end
++                  end
++                end
++              end
++              file_handle:close()
++
++              -- Only cache the file if we actually found valid ROS 2 blocks inside it
++              if #file_data.root_keys > 0 then
++                files[f] = file_data
++              end
++            end
++          end
++        end
++      end
++      vim.schedule(function()
++        M._cache[ws_root] = { files = files }
++        cb(M._evaluate_cached_workspace(ws_root, fqn, live_footprint, footprint_available))
++      end)
++    end)
++  end)
++end
++
++function M.match_file_to_node(bufnr, cb)
++  local filename =
++    vim.fs.basename(vim.api.nvim_buf_get_name(bufnr)):gsub("%.yaml$", ""):gsub("%.param$", "")
++  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
++  local file_data, footprints, current_root = { root_keys = {} }, {}, nil
++
++  for _, line in ipairs(lines) do
++    local r_key = line:match("^([%w_%-%.%/%*]+):%s*$")
++    if r_key then
++      current_root = r_key
++      has_ros_params = false -- Reset for the new root key
++    elseif current_root then
++      -- Ensure this block is actually a ROS 2 parameter block
++      if line:match("^%s+ros__parameters:") then
++        if not has_ros_params then
++          table.insert(file_data.root_keys, current_root)
++          footprints[current_root] = footprints[current_root] or {}
++          has_ros_params = true
++        end
++      elseif has_ros_params then
++        -- Only index parameters if we are safely inside a ros__parameters block
++        local p_key = line:match("^%s+([%w_%-%.]+):")
++        if p_key and not is_systemic(p_key) then
++          footprints[current_root][p_key] = true
++        end
++      end
++    end
++  end
++  RosApi.list_nodes(function(active_nodes)
++    if #active_nodes == 0 then
++      return cb({})
++    end
++    local mappings, instanced_conflicts = {}, {}
++
++    for _, yaml_root in ipairs(file_data.root_keys) do
++      local best_score, tied_fqns, root_footprint = 0, {}, footprints[yaml_root] or {}
++      for _, live_fqn in ipairs(active_nodes) do
++        local cand =
++          score_candidate(live_fqn, root_footprint, yaml_root, root_footprint, filename, false)
++        if cand and cand.score > 0 then
++          if cand.score > best_score then
++            best_score = cand.score
++            tied_fqns = { live_fqn }
++          elseif cand.score == best_score then
++            table.insert(tied_fqns, live_fqn)
++          end
++        end
++      end
++      if best_score > 0 then
++        if #tied_fqns == 1 then
++          table.insert(mappings, { yaml_root = yaml_root, fqn = tied_fqns[1] })
++        else
++          instanced_conflicts[yaml_root] = tied_fqns
++        end
++      end
++    end
++    for yaml_root, fqns in pairs(instanced_conflicts) do
++      table.insert(
++        mappings,
++        { yaml_root = yaml_root, fqn = fqns[1], is_instanced = true, tied = fqns }
++      )
++    end
++    cb(mappings)
++  end)
++end
++
++return M
+diff --git a/lua/nvim-ros2/tuner/ui.lua b/lua/nvim-ros2/tuner/ui.lua
+new file mode 100644
+index 0000000..9c3317c
+--- /dev/null
++++ b/lua/nvim-ros2/tuner/ui.lua
+@@ -0,0 +1,97 @@
++local M = {}
++local ns_id = vim.api.nvim_create_namespace("ros_tuner")
++
++--- Standardizes how virtual text and gutter signs are rendered.
++function M.set_sync_extmark(bufnr, row, anchor_text, range, state)
++  local conf = {
++    synced = { sign = "●", hl = "DiagnosticOk", text = " Synced" },
++    unused = { sign = "!", hl = "DiagnosticWarn", text = " Unused" },
++    offline = { sign = "○", hl = "Comment", text = " Offline" },
++    discovered = { sign = "+", hl = "Comment", text = " Synced" },
++  }
++  local c = conf[state]
++  if not c then
++    return
++  end
++  local marks = vim.api.nvim_buf_get_extmarks(
++    bufnr,
++    ns_id,
++    { row, 0 },
++    { row, -1 },
++    { details = true }
++  )
++
++  -- Preserve the original File value prefix if anchor is omitted
++  if not anchor_text then
++    if #marks > 0 and marks[1][4].virt_text and marks[1][4].virt_text[1] then
++      local old_text = marks[1][4].virt_text[1][1]
++      anchor_text = old_text:match("^(%s*#%s*%[.-%])") or ""
++    else
++      anchor_text = ""
++    end
++  end
++
++  vim.api.nvim_buf_set_extmark(bufnr, ns_id, row, 0, {
++    id = #marks > 0 and marks[1][1] or nil,
++    virt_text = { { anchor_text .. c.text .. (range or ""), c.hl } },
++    virt_text_pos = "eol",
++    sign_text = c.sign,
++    sign_hl_group = c.hl,
++    undo_restore = true,
++  })
++end
++
++--- Exposes buffer health to external statuslines.
++function M.tuner_status(bufnr)
++  bufnr = bufnr or vim.api.nvim_get_current_buf()
++  if not vim.b[bufnr].ros_tuner_active then
++    return ""
++  end
++
++  local is_synthetic = vim.b[bufnr].is_synthetic
++  local bufname = vim.api.nvim_buf_get_name(bufnr)
++  local display_name = ""
++
++  if is_synthetic then
++    display_name = bufname:match("ROS_LIVE_(.*)$") or "Proxy"
++    display_name = "[Proxy: " .. display_name .. "]"
++  else
++    display_name = bufname:match("ROS_TUNER_(.*)$") or "File"
++    display_name = "[File: " .. display_name .. "]"
++  end
++
++  local marks = vim.api.nvim_buf_get_extmarks(
++    bufnr,
++    ns_id,
++    { 0, 0 },
++    { -1, -1 },
++    { details = true }
++  )
++  local synced, unused, offline = 0, 0, 0
++  for _, mark in ipairs(marks) do
++    local sign = mark[4].sign_text
++    if sign == "●" or sign == "+" then
++      synced = synced + 1
++    elseif sign == "!" then
++      unused = unused + 1
++    elseif sign == "○" then
++      offline = offline + 1
++    end
++  end
++
++  local status = {}
++  if synced > 0 then
++    table.insert(status, "● " .. synced)
++  end
++  if unused > 0 then
++    table.insert(status, "! " .. unused)
++  end
++  if offline > 0 then
++    table.insert(status, "○ " .. offline)
++  end
++
++  local counts = #status == 0 and "" or table.concat(status, " ")
++  return "🤖 " .. display_name .. (counts ~= "" and (" " .. counts) or "")
++end
++
++return M
+diff --git a/lua/nvim-ros2/utils.lua b/lua/nvim-ros2/utils.lua
+new file mode 100644
+index 0000000..27cbed1
+--- /dev/null
++++ b/lua/nvim-ros2/utils.lua
+@@ -0,0 +1,55 @@
++local M = {}
++
++function M.normalize_fqn(name)
++  if not name then
++    return ""
++  end
++  name = name:match("^%s*(.-)%s*$")
++  if not name:match("^/") then
++    name = "/" .. name
++  end
++  return name:gsub("/+$", "")
++end
++
++function M.get_base_name(fqn)
++  return fqn:match("([^/]+)$") or fqn:gsub("^/", "")
++end
++
++--- Locates the root of the ROS 2 workspace prioritizing package.xml over .git
++function M.get_workspace_root(bufnr)
++  local current_file = vim.api.nvim_buf_get_name(bufnr or 0)
++  local search_path = current_file ~= "" and vim.fs.dirname(current_file) or vim.fn.getcwd()
++
++  local pkg = vim.fs.find("package.xml", { path = search_path, upward = true })[1]
++  if pkg then
++    return vim.fs.dirname(pkg)
++  end
++
++  local git = vim.fs.find(".git", { path = search_path, upward = true })[1]
++  if git then
++    return vim.fs.dirname(git)
++  end
++
++  return vim.fn.getcwd()
++end
++
++function M.find_package_root(path)
++  path = path or vim.api.nvim_buf_get_name(0)
++  if path:match("^oil://") then
++    path = path:sub(7)
++  end
++  if path == "" then
++    path = vim.fn.getcwd()
++  end
++
++  local uv = vim.uv or vim.loop
++  local stat = uv.fs_stat(path)
++  if stat and stat.type == "file" then
++    path = vim.fs.dirname(path)
++  end
++
++  local match = vim.fs.find("package.xml", { path = path, upward = true, type = "file" })[1]
++  return match and vim.fs.dirname(match) or nil
++end
++
++return M

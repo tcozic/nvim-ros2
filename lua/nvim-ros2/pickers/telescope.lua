@@ -205,7 +205,10 @@ function M.packages()
   require("telescope.builtin").find_files({
     prompt_title = "ROS 2 Packages",
     cwd = ws_root,
-    find_command = { "fd", "^package.xml$", "--exclude", "build", "--exclude", "install" },
+    find_command = vim.fn.executable("fd") == 1
+        and { "fd", "-g", "package.xml", "--exclude", "build", "--exclude", "install" }
+        or  { "find", ".", "-name", "package.xml", "-not", "-path", "*/build/*", "-not", "-path", "*/install/*" },
+    attach_mappings = function(_, map)
     attach_mappings = function(_, map)
       map("i", "<CR>", function(prompt_bufnr)
         local selection = require("telescope.actions.state").get_selected_entry()

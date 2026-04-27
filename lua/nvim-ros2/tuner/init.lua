@@ -107,7 +107,7 @@ function M.attach_node(target_node)
         end,
       }, function(choice)
         if choice then
-          vim.cmd("edit " .. candidates[1].path)
+          vim.cmd("edit " .. choice.path) -- [FIX] Use choice instead of candidates[1]
           vim.schedule(M.start_session)
         end
       end)
@@ -177,8 +177,10 @@ function M.setup_scratch_buffer(orig_buf, mappings)
     vim.cmd("tabnew")
   elseif open_mode == "split" or open_mode == "vsplit" then
     vim.cmd("vsplit")
+  elseif open_mode == "hide" then
+    -- [FIX] Explicitly handle hide: no window split command,
+    -- buffer will just replace current window's buffer below.
   end
-
   vim.api.nvim_set_current_buf(scratch)
   vim.bo[scratch].buftype, vim.bo[scratch].bufhidden, vim.bo[scratch].filetype =
     "acwrite", "wipe", "yaml"
@@ -505,6 +507,10 @@ function M.attach_to_buffer(bufnr)
           if not vim.api.nvim_buf_is_valid(bufnr) then
             return
           end
+          local winid = vim.fn.bufwinid(bufnr)
+          if winid == -1 then
+            return
+          end
 
           local captured_row = vim.api.nvim_win_get_cursor(0)[1] - 1
           local node, param, _, val = Engine.resolve_parameter_context(bufnr)
@@ -514,6 +520,19 @@ function M.attach_to_buffer(bufnr)
             state.last_param = param
 
             local cache_key = fqn .. ":" .. param
+            RosApi.get_param(fqn, param, function(live_val)
+              if live_val and live_val ~= val and live_val ~= "unknown" then
+                -- Sync UI or buffer if drifted
+                UI.set_sync_extmark(
+                  bufnr,
+                  captured_row,
+                  "  # [Live Drift: " .. live_val .. "]",
+                  nil,
+                  "synced"
+                )
+              end
+            end)
+            -- Fetch Range Metadata
             if param_metadata_cache[cache_key] and param_metadata_cache[cache_key].range then
               UI.set_sync_extmark(
                 bufnr,
@@ -807,7 +826,7 @@ function M.match_file_to_node(bufnr, cb)
     vim.fs.basename(vim.api.nvim_buf_get_name(bufnr)):gsub("%.yaml$", ""):gsub("%.param$", "")
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local file_data, footprints, current_root = { root_keys = {} }, {}, nil
-
+  local has_ros_params = false
   for _, line in ipairs(lines) do
     local r_key = line:match("^([%w_%-%.%/%*]+):%s*$")
     if r_key then

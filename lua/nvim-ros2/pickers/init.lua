@@ -1,4 +1,13 @@
-local Config = require("nvim-ros2.config")
+local open_mode = Config.options.tuner_open_mode or "split"
+
+  if open_mode == "tab" then
+    vim.cmd("tabnew")
+  elseif open_mode == "split" or open_mode == "vsplit" then
+    vim.cmd("vsplit")
+  elseif open_mode == "hide" then
+    -- [FIX] Explicitly handle hide: no window split command, 
+    -- buffer will just replace current window's buffer below.
+  endlocal Config = require("nvim-ros2.config")
 local M = {}
 
 function M.get_picker()
@@ -29,6 +38,13 @@ function M.nodes(opts)
   local picker = M.get_picker()
   if picker then
     picker.nodes(opts)
+  end
+end
+
+function M.actions()
+  local picker = M.get_picker()
+  if picker and picker.actions then
+    picker.actions()
   end
 end
 
