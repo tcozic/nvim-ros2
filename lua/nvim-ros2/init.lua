@@ -71,7 +71,6 @@ function M.setup(opts)
         local force_scratch = false
         local target_node = nil
 
-        -- Safely parse arguments regardless of order
         for i = 2, #args do
           if args[i] == "--scratch" then
             force_scratch = true

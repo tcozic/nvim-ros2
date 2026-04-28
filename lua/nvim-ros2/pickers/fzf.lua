@@ -1,14 +1,8 @@
 local M = {}
 local Utils = require("nvim-ros2.utils")
-local function get_command_output(cmd)
-  if vim.fn.executable("ros2") ~= 1 then
-    vim.notify("ros2 not found", vim.log.levels.ERROR)
-    return nil
-  end
-  return vim.fn.systemlist(cmd)
-end
+local Ros2 = require("nvim-ros2.api.ros2")
 local function ros_picker(opts)
-  local output = get_command_output(opts.system_cmd)
+  local output = Ros2.get_command_output(opts.system_cmd) -- [FIX] Use Utils
   if not output then
     return
   end
@@ -52,9 +46,12 @@ local function ros_picker(opts)
   })
 end
 
+-- lua/nvim-ros2/pickers/fzf.lua
+-- Replace your current M.interfaces() function entirely:
+
 function M.interfaces()
   local command = { "ros2", "interface", "list" }
-  local raw_output = get_command_output(command)
+  local raw_output = Ros2.get_command_output(command) -- [FIX] Use Utils
   if not raw_output then
     return
   end
@@ -82,7 +79,13 @@ function M.interfaces()
       return vim.fn.systemlist(cmd)
     end,
     actions = {
-      ["default"] = function() end,
+      -- [NEW] Wire up the default selection action to our Utils jumper
+      ["default"] = function(selected)
+        if not selected or #selected == 0 then
+          return
+        end
+        Ros2.jump_to_interface(selected[1])
+      end,
     },
   })
 end
@@ -154,33 +157,52 @@ end
 
 function M.topics_echo()
   ros_picker({
-    prompt_title = "Active Topics",
+    prompt_title = "Listen to Topic",
     system_cmd = { "ros2", "topic", "list" },
     command = "topic",
-    mode = "echo",
-    args = "--once",
+    mode = "info",
+    args = "",
+    on_select = Ros2.listen_topic, -- [FIX] Use the live listener!
   })
 end
 
+-- lua/nvim-ros2/pickers/fzf.lua
+-- Replace your current M.packages() function:
+
 function M.packages()
   local ws_root = Utils.get_workspace_root(0)
+  local workspace_packages = Utils.get_workspace_packages(ws_root)
 
-  require("fzf-lua").files({
+  if vim.tbl_isempty(workspace_packages) then
+    vim.notify("No ROS 2 packages found in workspace.", vim.log.levels.WARN)
+    return
+  end
+
+  -- Format strings for FZF to parse
+  local items = {}
+  for pkg_name, pkg_dir in pairs(workspace_packages) do
+    -- We hide the path behind a delimiter so we can extract it easily on selection
+    table.insert(items, string.format("%s 📦\t%s", pkg_name, pkg_dir))
+  end
+
+  require("fzf-lua").fzf_exec(items, {
     prompt = "ROS 2 Packages> ",
-    cwd = ws_root,
-    cmd = vim.fn.executable("fd") == 1 and "fd ^package.xml$ --exclude build --exclude install"
-      or "find . -name package.xml -not -path '*/install/*' -not -path '*/build/*'",
+    previewer = "builtin",
+    fn_transform = function(x)
+      return require("fzf-lua.make_entry").file(x:match("\t(.*)$"))
+    end,
     actions = {
       ["default"] = function(selected)
         if not selected or #selected == 0 then
           return
         end
-        -- fzf-lua returns the file path, we need its directory
-        local pkg_dir = vim.fs.dirname(ws_root .. "/" .. selected[1])
-        if pcall(require, "oil") then
-          require("oil").open(pkg_dir)
-        else
-          vim.cmd("edit " .. pkg_dir)
+        local pkg_dir = selected[1]:match("\t(.*)$")
+        if pkg_dir then
+          if pcall(require, "oil") then
+            require("oil").open(pkg_dir)
+          else
+            vim.cmd("Lexplore " .. pkg_dir)
+          end
         end
       end,
     },
@@ -188,7 +210,7 @@ function M.packages()
 end
 
 function M.sniper(subdir)
-  local pkg = Utils.find_package_root()
+  local pkg = Utils.get_package_root(0) -- [FIX]
   if not pkg then
     return
   end
@@ -207,7 +229,7 @@ function M.sniper(subdir)
 end
 
 function M.find_files_package()
-  local pkg = Utils.find_package_root()
+  local pkg = Utils.get_package_root(0) -- [FIX]
   if pkg then
     require("fzf-lua").files({ cwd = pkg, prompt = "Find in Package> " })
   else
@@ -216,12 +238,72 @@ function M.find_files_package()
 end
 
 function M.grep_package()
-  local pkg = Utils.find_package_root()
+  local pkg = Utils.get_package_root(0) -- [FIX]
   if pkg then
     require("fzf-lua").live_grep({ cwd = pkg, prompt = "Grep in Package> " })
   else
     vim.notify("Not inside a ROS 2 package.", vim.log.levels.WARN)
   end
+end
+
+function M.saved_payloads()
+  local bufnr = vim.api.nvim_get_current_buf()
+  local state = vim.b[bufnr].ros_rpc_state
+  if not state or not state.type then
+    vim.notify("Not in an active ROS RPC buffer", vim.log.levels.WARN)
+    return
+  end
+
+  Ros2.get_saved_payloads(state.type, bufnr, function(files)
+    if #files == 0 then
+      vim.notify("No compatible payloads found for " .. state.type, vim.log.levels.WARN)
+      return
+    end
+
+    local ws_root = Utils.get_workspace_root(bufnr)
+    local items = {}
+    for _, f in ipairs(files) do
+      -- Format string to hide the absolute path but let the previewer read it
+      table.insert(items, string.format("%s\t%s", f:sub(#ws_root + 2), f))
+    end
+
+    require("fzf-lua").fzf_exec(items, {
+      prompt = "Load Payload (" .. state.type .. ")> ",
+      previewer = "builtin",
+      fn_transform = function(x)
+        return require("fzf-lua.make_entry").file(x:match("\t(.*)$"))
+      end,
+      actions = {
+        ["default"] = function(selected)
+          if not selected or #selected == 0 then
+            return
+          end
+          local file_path = selected[1]:match("\t(.*)$")
+          if file_path then
+            vim.schedule(function()
+              if vim.api.nvim_buf_is_valid(bufnr) then
+                local target_win = nil
+                for _, win in ipairs(vim.api.nvim_list_wins()) do
+                  if vim.api.nvim_win_get_buf(win) == bufnr then
+                    target_win = win
+                    break
+                  end
+                end
+                if target_win then
+                  vim.api.nvim_set_current_win(target_win)
+                  vim.cmd("RosRpc load " .. vim.fn.fnameescape(file_path))
+                else
+                  vim.api.nvim_buf_call(bufnr, function()
+                    vim.cmd("RosRpc load " .. vim.fn.fnameescape(file_path))
+                  end)
+                end
+              end
+            end)
+          end
+        end,
+      },
+    })
+  end)
 end
 
 return M

@@ -67,6 +67,16 @@ Package-aware pickers designed to scope your searches to the specific ROS 2 pack
 - **Quick-Edits:** Instantly jump to the `CMakeLists.txt` or `package.xml` of your current package.
 - **Snipers:** Fast directory navigation to jump directly into `msg/`, `srv/`, `action/`, or `include/` folders.
 - **Smart Attach:** Press `<C-t>` while hovering over a node in the Active Nodes picker to instantly attach the ROS Tuner to its matching file, or `<C-r>` to attach a raw Scratch Proxy.
+- **Topic Echo:** Select an active topic to spawn a live, safely-managed buffer streaming YAML output.
+- **Interface Jumper:** Search `msg`, `srv`, or `action` definitions and press `<CR>` to instantly jump to the source file, resolving via `install` or local `src` directories automatically.
+
+### 🚀 The RPC Engine (Services & Actions)
+
+Launch ephemeral, auto-cleaning scratch buffers to execute ROS 2 calls just like Postman or Insomnia. 
+
+- **Live Streaming:** Trigger long-running actions. The engine intercepts Python CLI outputs and continuously rewrites the buffer's response section with clean, readable YAML.
+- **Safe Execution:** Stop long-running actions gracefully. Pressing `s` sends a native `SIGINT` (Ctrl-C) to trigger the Action Server's cancellation pipeline.
+- **Payload Management:** Save your YAML payloads to disk. The engine injects interface metadata so the **Smart Load Picker** (`<leader>l`) only displays payloads compatible with the current Service/Action.
 ### 🎛️ ROS 2 Tuner
 
 A hardware-in-the-loop tuning engine to safely synchronize local parameter files (`.yaml` / `.param`) with live DDS nodes on your robot. 
@@ -116,7 +126,31 @@ return {
     treesitter = true,
     tuner = true, -- Enables the :RosTune command and hardware proxy
     tuner_match_mode = "smart", -- "smart" (algorithm), "simple" (root keys), or "all" (skip filter)
+    tuner_open_mode = "hide",
   },
+config = function(_, opts)
+    require("nvim-ros2").setup(opts)
+
+    -- RPC Engine Keymaps (Buffer-Local)
+    vim.api.nvim_create_autocmd("BufEnter", {
+      pattern = "ROS_CALL_*",
+      callback = function(args)
+        local bufnr = args.buf
+        local map_opts = { buffer = bufnr, silent = true }
+
+        -- Execute the payload
+        vim.keymap.set("n", "<CR>", "<cmd>RosRpc send<CR>", vim.tbl_extend("force", map_opts, { desc = "Send RPC Call" }))
+        -- Gracefully cancel
+        vim.keymap.set("n", "s", "<cmd>RosRpc stop<CR>", vim.tbl_extend("force", map_opts, { desc = "Stop RPC Call" }))
+        -- Save with metadata
+        vim.keymap.set("n", "<leader>s", "<cmd>RosRpc save<CR>", vim.tbl_extend("force", map_opts, { desc = "Save Payload" }))
+        -- Smart Load compatible payloads
+        vim.keymap.set("n", "<leader>l", function() require("nvim-ros2.pickers").saved_payloads() end, vim.tbl_extend("force", map_opts, { desc = "Load Payload" }))
+        -- Quick exit
+        vim.keymap.set("n", "q", "<cmd>q<CR>", vim.tbl_extend("force", map_opts, { desc = "Close RPC Buffer" }))
+      end,
+    })
+  end,
   keys = {
     -- Base Pickers
     { "<leader>li", function() require("nvim-ros2").pickers.interfaces() end, desc = "[ROS 2]: List interfaces" },

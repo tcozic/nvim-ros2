@@ -90,7 +90,7 @@ end
 
 function M.edit_cmake()
   local Utils = require("nvim-ros2.utils")
-  local pkg = Utils.find_package_root()
+  local pkg = Utils.get_package_root(0) -- [FIX] Updated from find_package_root
   if pkg then
     vim.cmd("edit " .. pkg .. "/CMakeLists.txt")
   end
@@ -98,9 +98,21 @@ end
 
 function M.edit_package_xml()
   local Utils = require("nvim-ros2.utils")
-  local pkg = Utils.find_package_root()
+  local pkg = Utils.get_package_root(0) -- [FIX] Updated from find_package_root
   if pkg then
     vim.cmd("edit " .. pkg .. "/package.xml")
+  end
+end
+
+function M.saved_payloads()
+  local picker = M.get_picker()
+  if picker and picker.saved_payloads then
+    picker.saved_payloads()
+  else
+    vim.notify(
+      "Saved payloads picker not implemented for " .. require("nvim-ros2.config").options.picker,
+      vim.log.levels.WARN
+    )
   end
 end
 

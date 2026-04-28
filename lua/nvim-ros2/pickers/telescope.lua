@@ -3,41 +3,42 @@ local finders = require("telescope.finders")
 local pickers = require("telescope.pickers")
 local conf = require("telescope.config").values
 local Utils = require("nvim-ros2.utils")
+local Ros2 = require("nvim-ros2.api.ros2")
 local ros_previewers = require("nvim-ros2.telescope.previewers")
 -- Local previewers
 
 local M = {}
 
 --- Telescope picker to select ROS 2 interfaces
+-- lua/nvim-ros2/pickers/telescope.lua
+-- Replace your current M.interfaces() function entirely:
+
 function M.interfaces()
   local command = { "ros2", "interface", "list" }
-  local raw_output = nil
-  if vim.fn.executable("ros2") == 1 then
-    raw_output = vim.fn.systemlist(command)
-  else
-    vim.notify("ros2 not found", vim.log.levels.ERROR)
+  local raw_output = Ros2.get_command_output(command) -- [FIX] Using our centralized Utils call
+  if not raw_output then
     return
   end
 
   -- Process command output
   local filtered_output = {}
   for _, line in ipairs(raw_output) do
-    -- Identify output headers (e.g. "Messages:") to ignore them
     local section_header = line:match("^%s*(%a+):$")
     if not section_header then
-      -- trim leading and trailing whitespaces
       local trimmed_line = line:match("^%s*(.-)%s*$")
       if trimmed_line ~= "" then
         table.insert(filtered_output, trimmed_line)
       end
     end
   end
+
   local opts = {
     preview_title = "Show",
     prompt_title = "Select",
     results_title = "Interfaces",
     filtered_output = filtered_output,
   }
+
   pickers
     .new(opts, {
       finder = finders.new_table({
@@ -47,10 +48,19 @@ function M.interfaces()
       sorter = conf.generic_sorter(),
       previewer = ros_previewers.preview_interface(),
       dynamic_filter = true,
-      attach_mappings = function(_, map)
-        -- Disable enter behavior
-        map("i", "<CR>", function(_) end)
-        map("n", "<CR>", function(_) end)
+      attach_mappings = function(prompt_bufnr, map)
+        -- [NEW] Wire up the confirm action to our Utils jumper
+        local confirm = function()
+          local selection = require("telescope.actions.state").get_selected_entry()
+          require("telescope.actions").close(prompt_bufnr)
+          if selection then
+            local item_text = selection.value or selection[1]
+            Ros2.jump_to_interface(item_text)
+          end
+        end
+
+        map("i", "<CR>", confirm)
+        map("n", "<CR>", confirm)
         return true
       end,
     })
@@ -194,57 +204,77 @@ end
 
 function M.topics_echo()
   local system_cmd = { "ros2", "topic", "list" }
-
-  -- Process command output
   local opts = {
-    preview_title = "Topic Echo",
-    prompt_title = "Search",
+    preview_title = "Topic Info",
+    prompt_title = "Listen to Topic",
     results_title = "Active Topics",
     system_cmd = system_cmd,
     command = "topic",
-    mode = "echo",
-    args = "--once",
+    mode = "info",
+    args = "",
+    on_select = Ros2.listen_topic, -- [FIX] Use the live listener!
   }
   ros_picker(opts)
 end
 
+-- lua/nvim-ros2/pickers/telescope.lua
+-- Replace your current M.packages() function:
+
 function M.packages()
   local ws_root = Utils.get_workspace_root(0)
-  require("telescope.builtin").find_files({
-    prompt_title = "ROS 2 Packages",
-    cwd = ws_root,
-    find_command = vim.fn.executable("fd") == 1
-        and { "fd", "-g", "package.xml", "--exclude", "build", "--exclude", "install" }
-      or {
-        "find",
-        ".",
-        "-name",
-        "package.xml",
-        "-not",
-        "-path",
-        "*/build/*",
-        "-not",
-        "-path",
-        "*/install/*",
-      },
-    attach_mappings = function(_, map) -- only once
-      map("i", "<CR>", function(prompt_bufnr)
-        local selection = require("telescope.actions.state").get_selected_entry()
-        require("telescope.actions").close(prompt_bufnr)
-        local pkg_dir = vim.fs.dirname(ws_root .. "/" .. selection.value)
-        if pcall(require, "oil") then
-          require("oil").open(pkg_dir)
-        else
-          vim.cmd("edit " .. pkg_dir)
+  local workspace_packages = Utils.get_workspace_packages(ws_root)
+
+  if vim.tbl_isempty(workspace_packages) then
+    vim.notify("No ROS 2 packages found in workspace.", vim.log.levels.WARN)
+    return
+  end
+
+  local results = {}
+  for pkg_name, pkg_dir in pairs(workspace_packages) do
+    table.insert(results, {
+      display = pkg_name .. " 📦",
+      ordinal = pkg_name,
+      pkg_dir = pkg_dir,
+    })
+  end
+
+  require("telescope.pickers")
+    .new({}, {
+      prompt_title = "ROS 2 Packages",
+      finder = require("telescope.finders").new_table({
+        results = results,
+        entry_maker = function(entry)
+          return {
+            value = entry,
+            display = entry.display,
+            ordinal = entry.ordinal,
+            path = entry.pkg_dir, -- Allows standard Telescope file previewers to work
+          }
+        end,
+      }),
+      sorter = require("telescope.config").values.generic_sorter({}),
+      attach_mappings = function(prompt_bufnr, map)
+        local confirm = function()
+          local selection = require("telescope.actions.state").get_selected_entry()
+          require("telescope.actions").close(prompt_bufnr)
+          if selection and selection.value.pkg_dir then
+            if pcall(require, "oil") then
+              require("oil").open(selection.value.pkg_dir)
+            else
+              vim.cmd("Lexplore " .. selection.value.pkg_dir)
+            end
+          end
         end
-      end)
-      return true
-    end,
-  })
+        map("i", "<CR>", confirm)
+        map("n", "<CR>", confirm)
+        return true
+      end,
+    })
+    :find()
 end
 
 function M.sniper(subdir)
-  local pkg = Utils.find_package_root()
+  local pkg = Utils.get_package_root(0) -- [FIX]
   if not pkg then
     return
   end
@@ -264,7 +294,7 @@ function M.sniper(subdir)
 end
 
 function M.find_files_package()
-  local pkg = Utils.find_package_root()
+  local pkg = Utils.get_package_root(0) -- [FIX]
   if pkg then
     require("telescope.builtin").find_files({
       cwd = pkg,
@@ -276,7 +306,7 @@ function M.find_files_package()
 end
 
 function M.grep_package()
-  local pkg = Utils.find_package_root()
+  local pkg = Utils.get_package_root(0) -- [FIX]
   if pkg then
     require("telescope.builtin").live_grep({
       cwd = pkg,
@@ -285,6 +315,81 @@ function M.grep_package()
   else
     vim.notify("Not inside a ROS 2 package.", vim.log.levels.WARN)
   end
+end
+
+function M.saved_payloads()
+  local bufnr = vim.api.nvim_get_current_buf()
+  local state = vim.b[bufnr].ros_rpc_state
+  if not state or not state.type then
+    vim.notify("Not in an active ROS RPC buffer", vim.log.levels.WARN)
+    return
+  end
+
+  Ros2.get_saved_payloads(state.type, bufnr, function(files)
+    if #files == 0 then
+      vim.notify("No compatible payloads found for " .. state.type, vim.log.levels.WARN)
+      return
+    end
+
+    local ws_root = Utils.get_workspace_root(bufnr)
+    local results = {}
+    for _, f in ipairs(files) do
+      table.insert(results, {
+        display = f:sub(#ws_root + 2),
+        path = f,
+        ordinal = f:sub(#ws_root + 2),
+      })
+    end
+
+    require("telescope.pickers")
+      .new({}, {
+        prompt_title = "Load Payload (" .. state.type .. ")",
+        finder = require("telescope.finders").new_table({
+          results = results,
+          entry_maker = function(entry)
+            return {
+              value = entry.path,
+              display = entry.display,
+              ordinal = entry.ordinal,
+              path = entry.path, -- Used by Telescope's file previewer
+            }
+          end,
+        }),
+        sorter = require("telescope.config").values.generic_sorter({}),
+        previewer = require("telescope.config").values.grep_previewer({}),
+        attach_mappings = function(prompt_bufnr, map)
+          local confirm = function()
+            local selection = require("telescope.actions.state").get_selected_entry()
+            require("telescope.actions").close(prompt_bufnr)
+            if selection and selection.value then
+              vim.schedule(function()
+                if vim.api.nvim_buf_is_valid(bufnr) then
+                  local target_win = nil
+                  for _, win in ipairs(vim.api.nvim_list_wins()) do
+                    if vim.api.nvim_win_get_buf(win) == bufnr then
+                      target_win = win
+                      break
+                    end
+                  end
+                  if target_win then
+                    vim.api.nvim_set_current_win(target_win)
+                    vim.cmd("RosRpc load " .. vim.fn.fnameescape(selection.value))
+                  else
+                    vim.api.nvim_buf_call(bufnr, function()
+                      vim.cmd("RosRpc load " .. vim.fn.fnameescape(selection.value))
+                    end)
+                  end
+                end
+              end)
+            end
+          end
+          map("i", "<CR>", confirm)
+          map("n", "<CR>", confirm)
+          return true
+        end,
+      })
+      :find()
+  end)
 end
 
 return M

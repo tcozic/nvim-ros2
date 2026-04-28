@@ -1,19 +1,12 @@
 local M = {}
 local Utils = require("nvim-ros2.utils")
-local function get_command_output(cmd)
-  if vim.fn.executable("ros2") ~= 1 then
-    vim.notify("ros2 not found", vim.log.levels.ERROR)
-    return nil
-  end
-  return vim.fn.systemlist(cmd)
-end
+local Ros2 = require("nvim-ros2.api.ros2")
 
 local function ros_picker(opts)
-  local output = get_command_output(opts.system_cmd)
+  local output = Ros2.get_command_output(opts.system_cmd)
   if not output then
     return
   end
-
   local items = {}
   for _, line in ipairs(output) do
     table.insert(items, { text = line, item = line })
@@ -80,11 +73,10 @@ end
 
 function M.interfaces()
   local command = { "ros2", "interface", "list" }
-  local raw_output = get_command_output(command)
+  local raw_output = Ros2.get_command_output(command)
   if not raw_output then
     return
   end
-
   local items = {}
   for _, line in ipairs(raw_output) do
     local section_header = line:match("^%s*(%a+):$")
@@ -110,7 +102,12 @@ function M.interfaces()
       ctx.preview:set_lines(preview_output)
       ctx.preview:highlight({ lang = "ros2" })
     end,
-    confirm = function() end,
+    confirm = function(picker, item)
+      picker:close()
+      if item and item.text then
+        Ros2.jump_to_interface(item.text)
+      end
+    end,
   })
 end
 
@@ -149,21 +146,27 @@ end
 
 function M.actions()
   ros_picker({
-    prompt_title = "Active Actions",
+    prompt_title = "Call Action",
     system_cmd = { "ros2", "action", "list" },
     command = "action",
     mode = "info",
     args = "--show-types",
+    on_select = function(item_text)
+      Ros2.call_rpc("action", item_text)
+    end, -- [NEW]
   })
 end
 
 function M.services()
   ros_picker({
-    prompt_title = "Active Services",
+    prompt_title = "Call Service",
     system_cmd = { "ros2", "service", "list" },
     command = "service",
     mode = "type",
     args = "",
+    on_select = function(item_text)
+      Ros2.call_rpc("service", item_text)
+    end, -- [NEW]
   })
 end
 
@@ -179,50 +182,50 @@ end
 
 function M.topics_echo()
   ros_picker({
-    prompt_title = "Active Topics",
+    prompt_title = "Listen to Topic",
     system_cmd = { "ros2", "topic", "list" },
     command = "topic",
-    mode = "echo",
-    args = "--once",
-    timeout = 3000,
+    mode = "info",
+    args = "",
+    on_select = Ros2.listen_topic, -- [FIX] Use the live listener!
   })
 end
 
 function M.packages()
   local ws_root = Utils.get_workspace_root(0)
 
-  Snacks.picker.files({
+  -- 1. Fetch the pre-parsed package dictionary from Utils
+  local workspace_packages = Utils.get_workspace_packages(ws_root)
+
+  if vim.tbl_isempty(workspace_packages) then
+    vim.notify("No ROS 2 packages found in workspace.", vim.log.levels.WARN)
+    return
+  end
+
+  -- 2. Build the picker items array
+  local items = {}
+  for pkg_name, pkg_dir in pairs(workspace_packages) do
+    -- Smart Preview: Prioritize README, fallback to Folder Tree
+    local preview_file = pkg_dir
+    for _, v in ipairs({ "/README.md", "/README" }) do
+      if vim.uv.fs_stat(pkg_dir .. v) then
+        preview_file = pkg_dir .. v
+        break
+      end
+    end
+
+    table.insert(items, {
+      text = pkg_name .. " 📦",
+      pkg_dir = pkg_dir,
+      file = preview_file, -- Triggers native Snacks previewer (tree or markdown)
+    })
+  end
+
+  -- 3. Launch the picker
+  Snacks.picker.pick({
     title = "ROS 2 Packages",
+    items = items,
     format = "text",
-    cmd = vim.fn.executable("fd") == 1 and "fd" or "find",
-    args = vim.fn.executable("fd") == 1
-        and { "^package.xml$", "--exclude", "build", "--exclude", "install", "--exclude", "log" }
-      or { "-name", "package.xml", "-not", "-path", "*/install/*", "-not", "-path", "*/build/*" },
-
-    transform = function(item)
-      local xml_path = item.file
-      local pkg_dir = vim.fs.dirname(xml_path)
-      local pkg_name = vim.fs.basename(pkg_dir)
-
-      -- Parse XML for actual package name
-      local f = io.open(xml_path, "r")
-      if f then
-        local content = f:read("*a")
-        f:close()
-        pkg_name = content:match("<name>%s*(.-)%s*</name>") or pkg_name
-      end
-
-      item.pkg_dir = pkg_dir
-      item.text = pkg_name .. " 📦"
-      -- Preview the README if it exists
-      for _, v in ipairs({ "/README.md", "/README" }) do
-        if vim.uv.fs_stat(pkg_dir .. v) then
-          item.file = pkg_dir .. v
-          break
-        end
-      end
-      return item
-    end,
     actions = {
       confirm = function(picker, item)
         picker:close()
@@ -240,7 +243,7 @@ function M.packages()
 end
 
 function M.sniper(subdir)
-  local pkg = Utils.find_package_root()
+  local pkg = Utils.get_package_root(0) -- [FIX]
   if not pkg then
     return
   end
@@ -266,7 +269,7 @@ function M.sniper(subdir)
 end
 
 function M.find_files_package()
-  local pkg = Utils.find_package_root()
+  local pkg = Utils.get_package_root(0) -- [FIX]
   if pkg then
     Snacks.picker.files({
       cwd = pkg,
@@ -278,7 +281,7 @@ function M.find_files_package()
 end
 
 function M.grep_package()
-  local pkg = Utils.find_package_root()
+  local pkg = Utils.get_package_root(0) -- [FIX]
   if pkg then
     Snacks.picker.grep({
       cwd = pkg,
@@ -287,6 +290,69 @@ function M.grep_package()
   else
     vim.notify("Not inside a ROS 2 package.", vim.log.levels.WARN)
   end
+end
+
+function M.saved_payloads()
+  local bufnr = vim.api.nvim_get_current_buf()
+  local state = vim.b[bufnr].ros_rpc_state
+  if not state or not state.type then
+    vim.notify("Not in an active ROS RPC buffer", vim.log.levels.WARN)
+    return
+  end
+
+  Ros2.get_saved_payloads(state.type, bufnr, function(files)
+    if #files == 0 then
+      vim.notify("No compatible payloads found for " .. state.type, vim.log.levels.WARN)
+      return
+    end
+
+    local items = {}
+    local ws_root = Utils.get_workspace_root(bufnr)
+
+    for _, f in ipairs(files) do
+      table.insert(items, {
+        -- Show nice relative paths in the picker UI
+        text = f:sub(#ws_root + 2),
+        file = f,
+      })
+    end
+
+    Snacks.picker.pick({
+      title = "Load Payload (" .. state.type .. ")",
+      items = items,
+      format = "file",
+      actions = {
+        confirm = function(picker, item)
+          picker:close()
+          if item and item.file then
+            vim.schedule(function()
+              if vim.api.nvim_buf_is_valid(bufnr) then
+                -- [FIX] Find the actual window holding our scratch buffer
+                local target_win = nil
+                for _, win in ipairs(vim.api.nvim_list_wins()) do
+                  if vim.api.nvim_win_get_buf(win) == bufnr then
+                    target_win = win
+                    break
+                  end
+                end
+
+                -- Forcefully move the cursor to that window before executing the load
+                if target_win then
+                  vim.api.nvim_set_current_win(target_win)
+                  vim.cmd("RosRpc load " .. vim.fn.fnameescape(item.file))
+                else
+                  -- Fallback if the buffer is somehow completely hidden
+                  vim.api.nvim_buf_call(bufnr, function()
+                    vim.cmd("RosRpc load " .. vim.fn.fnameescape(item.file))
+                  end)
+                end
+              end
+            end)
+          end
+        end,
+      },
+    })
+  end)
 end
 
 return M
