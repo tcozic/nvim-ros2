@@ -93,7 +93,7 @@ function M.listen_topic(topic_name)
   vim.bo[scratch].filetype = "yaml"
 
   pcall(vim.api.nvim_buf_set_name, scratch, "ROS_LISTEN_" .. topic_name:gsub("/", "_"))
-  vim.cmd("vsplit | buffer " .. scratch)
+  vim.cmd("buffer " .. scratch)
 
   local msg_accumulator = {}
   local cmd = { "ros2", "topic", "echo", "--no-arr", topic_name }
@@ -155,6 +155,9 @@ function M.listen_topic(topic_name)
       vim.schedule(function()
         if vim.api.nvim_buf_is_valid(scratch) then
           vim.bo[scratch].modifiable = true
+          if #msg_accumulator > 0 then
+            vim.api.nvim_buf_set_lines(scratch, 0, -1, false, msg_accumulator)
+          end
           vim.api.nvim_buf_set_lines(
             scratch,
             -1,
@@ -187,23 +190,32 @@ end
 -- 3. PAYLOAD DISCOVERY API
 --------------------------------------------------------------------------------
 
+local _payload_cache = {}
+local cache_group = vim.api.nvim_create_augroup("Ros2PayloadCache", { clear = true })
+
+-- Auto-invalidate the payload cache whenever a YAML/Param file is edited
+vim.api.nvim_create_autocmd("BufWritePost", {
+  pattern = { "*.yaml", "*.param" },
+  group = cache_group,
+  callback = function()
+    _payload_cache = {}
+  end,
+})
+
 --- Scans the current package for saved YAML payloads matching the specified interface type.
---- @param interface_type string The ROS 2 interface type (e.g., "std_srvs/srv/SetBool")
---- @param bufnr number The buffer ID to resolve the workspace package root from
---- @param cb function Callback function that receives a table of compatible file paths
---- Scans the current package for saved YAML payloads matching the specified interface type.
---- @param interface_type string The ROS 2 interface type (e.g., "std_srvs/srv/SetBool")
---- @param bufnr number The buffer ID to resolve the workspace package root from
---- @param cb function Callback function that receives a table of compatible file paths
 function M.get_saved_payloads(interface_type, bufnr, cb)
   if not interface_type or interface_type == "" then
     return cb({})
   end
 
-  -- Guarantee exact matching by stripping hidden whitespace/carriage returns
   local safe_type = interface_type:gsub("%s+", "")
-
   local ws_root = Utils.get_workspace_root(bufnr)
+  local cache_key = ws_root .. "_" .. safe_type
+
+  if _payload_cache[cache_key] then
+    return cb(_payload_cache[cache_key])
+  end
+
   local find_cmd = vim.fn.executable("fd") == 1
       and {
         "fd",
@@ -220,7 +232,6 @@ function M.get_saved_payloads(interface_type, bufnr, cb)
         "-E",
         "log",
       }
-    -- [FIX] Correct parenthesis syntax for direct execution (no shell escaping needed)
     or {
       "find",
       ws_root,
@@ -250,12 +261,10 @@ function M.get_saved_payloads(interface_type, bufnr, cb)
 
       if out.code == 0 and out.stdout and out.stdout ~= "" then
         for _, f in ipairs(vim.split(out.stdout, "\n", { trimempty = true })) do
-          -- [FIX] Strip invisible carriage returns that break io.open
           local clean_f = f:gsub("\r", "")
           local file = io.open(clean_f, "r")
 
           if file then
-            -- Safely scan the first 5 lines in case of empty leading lines
             for _ = 1, 5 do
               local line = file:read("*l")
               if not line then
@@ -272,6 +281,8 @@ function M.get_saved_payloads(interface_type, bufnr, cb)
           end
         end
       end
+
+      _payload_cache[cache_key] = compatible_files
       cb(compatible_files)
     end)
   end)
@@ -310,7 +321,6 @@ local function rpc_fetch_type(target_category, target_name, cb)
 end
 
 -- Extracts the payload from the scratch buffer
--- Returns: raw_lines (for saving), clean_lines (for execution), start_idx, end_idx
 local function rpc_get_payload(bufnr)
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local raw_lines, clean_lines = {}, {}
@@ -323,9 +333,7 @@ local function rpc_get_payload(bufnr)
       break
     end
     if in_payload then
-      -- Keep comments and blank lines for saving to disk
       table.insert(raw_lines, l)
-      -- Strip comments and blank lines for the actual ROS 2 shell execution
       if not l:match("^%s*#") and not l:match("^%s*$") then
         table.insert(clean_lines, l)
       end
@@ -346,7 +354,6 @@ local function rpc_save(bufnr, filepath)
   local function write_to_disk(path)
     local f = io.open(path, "w")
     if f then
-      -- Automatically inject metadata if it's not already there
       if #raw_lines == 0 or not raw_lines[1]:match("^# Type:") then
         f:write("# Type: " .. state.type .. "\n")
       end
@@ -379,7 +386,6 @@ local function rpc_save(bufnr, filepath)
 end
 
 -- Loads a payload from disk into the buffer (Pure command)
--- Loads a payload from disk into the buffer (Pure command)
 local function rpc_load(bufnr, filepath)
   local state = vim.b[bufnr].ros_rpc_state
 
@@ -387,7 +393,6 @@ local function rpc_load(bufnr, filepath)
     if vim.fn.filereadable(path) == 1 then
       local lines = {}
       for line in io.lines(path) do
-        -- [FIX] Strip the injected Metadata so it doesn't litter the clean UI payload
         if not line:match("^#%s*Type:") then
           table.insert(lines, line)
         end
@@ -421,6 +426,7 @@ local function rpc_load(bufnr, filepath)
     end)
   end
 end
+
 -- Sends a SIGINT (Ctrl-C) to the running Action/Service
 local function rpc_stop(bufnr)
   local state = vim.b[bufnr].ros_rpc_state
@@ -440,6 +446,7 @@ local function rpc_stop(bufnr)
 end
 
 -- Helper: Cleans Pythonic CLI output into standard YAML
+-- Helper: Safely parses Pythonic CLI output into standard YAML without corrupting nested data
 local function rpc_format_to_yaml(line)
   if
     line:match("requester:")
@@ -456,12 +463,50 @@ local function rpc_format_to_yaml(line)
   then
     return nil
   end
-  local inner = line:match("[%w_%.]+%((.*)%)") or line
-  local clean = inner:gsub("=", ": "):gsub("True", "true"):gsub("False", "false")
-  clean = clean:gsub(",%s*([%w_]+):", "\n%1:")
-  return clean:gsub("^%s+", "")
-end
 
+  local inner = line:match("[%w_%.]+%((.*)%)") or line
+  local clean = inner:gsub("([%w_]+)%s*=%s*", "%1: "):gsub("True", "true"):gsub("False", "false")
+
+  -- Depth-aware string walker to safely break top-level fields into YAML lines
+  local out = ""
+  local depth = 0
+  local in_quote = false
+  local quote_char = ""
+  local i = 1
+
+  while i <= #clean do
+    local c = clean:sub(i, i)
+    local prev_c = i > 1 and clean:sub(i - 1, i - 1) or ""
+
+    if (c == "'" or c == '"') and prev_c ~= "\\" then
+      if not in_quote then
+        in_quote = true
+        quote_char = c
+      elseif quote_char == c then
+        in_quote = false
+      end
+    elseif not in_quote then
+      if c == "(" or c == "[" or c == "{" then
+        depth = depth + 1
+      elseif c == ")" or c == "]" or c == "}" then
+        depth = depth - 1
+      elseif c == "," and depth == 0 then
+        local remainder = clean:sub(i + 1)
+        -- Only split if the comma is at depth 0 AND is immediately followed by a standard key: pair
+        if remainder:match("^%s*([%w_]+):") then
+          out = out .. "\n"
+          local spaces = remainder:match("^(%s*)")
+          i = i + #spaces
+          c = "" -- Drop the comma
+        end
+      end
+    end
+    out = out .. c
+    i = i + 1
+  end
+
+  return out:gsub("^\n", ""):gsub("^%s+", "")
+end
 -- Executes the ROS 2 call and streams the feedback
 local function rpc_execute(bufnr)
   local state = vim.b[bufnr].ros_rpc_state
@@ -524,6 +569,11 @@ local function rpc_execute(bufnr)
       end
     end
     current_block = {}
+
+    -- Limit buffer growth for high-frequency actions
+    while #log_lines > 500 do
+      table.remove(log_lines, 1)
+    end
   end
 
   state.job_id = vim.fn.jobstart(cmd, {
@@ -677,10 +727,8 @@ function M.call_rpc(target_category, item_text)
   end
   local target_name = item_text:match("^(%S+)")
 
-  local interface_type = nil
-  if target_category == "action" then
-    interface_type = item_text:match("%[(.-)%]")
-  end
+  -- Check if type is already embedded from picker payload
+  local interface_type = item_text:match("%[(.-)%]")
 
   local function on_type_fetched(itype)
     if not itype then
@@ -718,7 +766,7 @@ function M.call_rpc(target_category, item_text)
           table.insert(content, (line:gsub('^"', ""):gsub('"$', "")))
         end
         vim.api.nvim_buf_set_lines(scratch, 0, -1, false, content)
-        vim.cmd("vsplit | buffer " .. scratch)
+        vim.cmd("buffer " .. scratch)
 
         -- Register Unified Command
         vim.api.nvim_buf_create_user_command(scratch, "RosRpc", rpc_command_router, {
@@ -781,7 +829,7 @@ function M.call_rpc(target_category, item_text)
 end
 
 --------------------------------------------------------------------------------
--- 5. PARAMETER TUNER
+-- 6. PARAMETER TUNER
 --------------------------------------------------------------------------------
 function M.list_nodes(cb)
   vim.system({ "ros2", "node", "list" }, { text = true, timeout = 2000 }, function(out)

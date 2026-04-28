@@ -53,7 +53,6 @@ end
 
 function M.setup(opts)
   -- Get default values
-  local Config = require("nvim-ros2.config")
   Config.setup(opts)
 
   if Config.options.picker == "telescope" then

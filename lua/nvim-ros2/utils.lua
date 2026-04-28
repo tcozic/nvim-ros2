@@ -2,6 +2,19 @@
 
 local M = {}
 
+-- Session cache for workspace packages
+local _pkg_cache = {}
+
+-- Auto-invalidate cache if a package.xml is edited/saved
+local cache_group = vim.api.nvim_create_augroup("Ros2UtilsCache", { clear = true })
+vim.api.nvim_create_autocmd("BufWritePost", {
+  pattern = "package.xml",
+  group = cache_group,
+  callback = function()
+    _pkg_cache = {}
+  end,
+})
+
 -- Private Helper: Handles both Buffer IDs and String Paths (like oil://)
 local function get_search_path(target)
   local path = ""
@@ -63,13 +76,23 @@ function M.get_workspace_root(target)
 end
 
 --- 📦 PACKAGE FINDER: Locates the specific package root (where package.xml lives).
+--- 📦 PACKAGE FINDER: Locates the specific package root (where package.xml lives).
 function M.get_package_root(target)
   local search_path = get_search_path(target)
 
-  local root = vim.fs.find({ "package.xml", ".git" }, {
+  -- Pass 1: Strict package.xml search (Highest Priority for ROS 2)
+  local root = vim.fs.find({ "package.xml" }, {
     path = search_path,
     upward = true,
   })[1]
+
+  -- Pass 2: Fallback to .git if we are outside a ROS package but in a repo
+  if not root then
+    root = vim.fs.find({ ".git" }, {
+      path = search_path,
+      upward = true,
+    })[1]
+  end
 
   return root and vim.fs.dirname(root) or vim.fn.getcwd()
 end
@@ -78,9 +101,12 @@ M.find_package_root = M.get_package_root
 
 --- Scans the workspace and returns a table mapping ROS 2 package names to their directory paths.
 function M.get_workspace_packages(ws_root)
-  local packages = {}
   if not ws_root then
-    return packages
+    return {}
+  end
+
+  if _pkg_cache[ws_root] then
+    return _pkg_cache[ws_root]
   end
 
   local cmd = vim.fn.executable("fd") == 1
@@ -116,6 +142,7 @@ function M.get_workspace_packages(ws_root)
     }
 
   local xml_files = vim.fn.systemlist(cmd)
+  local packages = {}
 
   for _, xml_path in ipairs(xml_files) do
     local pkg_dir = vim.fs.dirname(xml_path)
@@ -132,6 +159,7 @@ function M.get_workspace_packages(ws_root)
     packages[pkg_name] = pkg_dir
   end
 
+  _pkg_cache[ws_root] = packages
   return packages
 end
 
