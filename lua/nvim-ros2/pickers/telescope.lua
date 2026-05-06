@@ -133,7 +133,7 @@ function M.nodes(opts)
           if require("nvim-ros2.config").options.tuner then
             require("nvim-ros2.tuner").attach_node(node_name, false)
           else
-            vim.notify("ROS Tuner is disabled in config.", vim.log.levels.WARN)
+            vim.notify("ROS Tuner is disabled in config", vim.log.levels.WARN)
           end
         end,
       },
@@ -225,7 +225,7 @@ function M.packages()
   local workspace_packages = Utils.get_workspace_packages(ws_root)
 
   if vim.tbl_isempty(workspace_packages) then
-    vim.notify("No ROS 2 packages found in workspace.", vim.log.levels.WARN)
+    vim.notify("No ROS 2 packages found in workspace", vim.log.levels.WARN)
     return
   end
 
@@ -301,7 +301,7 @@ function M.find_files_package()
       prompt_title = "Find in Package: " .. vim.fs.basename(pkg),
     })
   else
-    vim.notify("Not inside a ROS 2 package.", vim.log.levels.WARN)
+    vim.notify("Not inside a ROS 2 package", vim.log.levels.WARN)
   end
 end
 
@@ -313,7 +313,7 @@ function M.grep_package()
       prompt_title = "Grep in Package: " .. vim.fs.basename(pkg),
     })
   else
-    vim.notify("Not inside a ROS 2 package.", vim.log.levels.WARN)
+    vim.notify("Not inside a ROS 2 package", vim.log.levels.WARN)
   end
 end
 

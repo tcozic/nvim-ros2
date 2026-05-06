@@ -1,6 +1,15 @@
 local Utils = require("nvim-ros2.utils")
 local M = {}
 
+local param_type_map = {
+  integer_scalar = "integer",
+  float_scalar = "double",
+  boolean_scalar = "boolean",
+  string_scalar = "string",
+  flow_sequence = "array",
+  block_sequence = "array",
+}
+
 local function get_yaml_value_type(value_node)
   local actual_node = value_node
   while
@@ -17,19 +26,11 @@ local function get_yaml_value_type(value_node)
     end
     actual_node = child
   end
+  if not actual_node then
+    return nil
+  end -- guard
   local t = actual_node:type()
-  if t == "integer_scalar" then
-    return "integer"
-  elseif t == "float_scalar" then
-    return "double"
-  elseif t == "boolean_scalar" then
-    return "boolean"
-  elseif t == "string_scalar" then
-    return "string"
-  elseif t == "flow_sequence" or t == "block_sequence" then
-    return "array"
-  end
-  return t
+  return param_type_map[t] or t
 end
 
 --- Resolves the parameter name, node namespace, and value under the cursor.
@@ -122,7 +123,11 @@ function M.compute_tree_insertions(
   local child_indent_str = parent_indent_str .. "  "
   for idx = start_idx, end_idx do
     local l = current_lines[idx]
+    -- Checks if a line is either completely blank or a YAML/Python style comment.
+    -- "^%s*#" matches lines starting with optional whitespace followed by a '#'.
+    -- "^%s*$" matches lines consisting entirely of whitespace (or completely empty).
     if l and not l:match("^%s*#") and not l:match("^%s*$") then
+      -- "^(%s*)" captures all consecutive space/tab characters from the start of the string.
       local detect_indent = l:match("^(%s*)")
       if #detect_indent > #parent_indent_str then
         child_indent_str = detect_indent
@@ -132,10 +137,13 @@ function M.compute_tree_insertions(
   end
   for _, k in ipairs(keys) do
     local v, found_idx = tree[k], nil
+    -- Searches for any of: . + - * ? [ ] ^ $ ( ) %
+    -- And prefixes them with a '%' so they are treated as literal characters in subsequent matches.
     local escaped_k = k:gsub("([%.%+%-%*%?%[%]%^%$%(%)%%])", "%%%1")
     for idx = start_idx, end_idx do
       if
         current_lines[idx]
+        -- "^%s*#" matches lines starting with optional whitespace followed by a '#'.
         and not current_lines[idx]:match("^%s*#")
         and current_lines[idx]:match("^" .. child_indent_str .. escaped_k .. ":")
       then
@@ -149,9 +157,12 @@ function M.compute_tree_insertions(
       for idx = child_start, end_idx do
         if
           current_lines[idx]
+          -- "^%s*#" matches lines starting with optional whitespace followed by a '#'.
+          -- "^%s*$" matches lines consisting entirely of whitespace (or completely empty).
           and not current_lines[idx]:match("^%s*#")
           and not current_lines[idx]:match("^%s*$")
         then
+          -- "^(%s*)" captures all consecutive space/tab characters from the start of the string.
           if #current_lines[idx]:match("^(%s*)") <= #child_indent_str then
             break
           end
@@ -203,12 +214,19 @@ function M.parse_ros2_dump(dump_text, active_node)
   local live_params = {}
   local path_stack = {}
   for line in dump_text:gmatch("[^\r\n]+") do
+    -- Parses a standard YAML/dictionary line into indent, key, and value components.
+    -- Group 1: "^(%s*)" captures leading indentation.
+    -- Group 2: "['\"]?([%w_%-%.]+)['\"]?" captures the key name, ignoring optional surrounding quotes.
+    -- Group 3: ":%s*(.*)$" captures the remaining string after the colon as the value.
     local indent, key, val = line:match("^(%s*)['\"]?([%w_%-%.]+)['\"]?:%s*(.*)$")
     if key then
       local depth = math.floor(#indent / 2) + 1
       path_stack[depth] = key
       if val ~= "" and val ~= nil then
-        -- RESTORED: Strip inline YAML comments like `1.0 # default`
+        -- Cleans up the value string by removing inline comments and trailing whitespace.
+        -- "^(.-)%s+#.*$" captures everything before a space-padded '#' comment.
+        -- "^(.-)%s*$" acts as a fallback to simply trim trailing whitespace if no comment exists.
+        -- The non-greedy '(.-)' ensures we don't accidentally swallow the whitespace we want to trim.
         local clean_val = val:match("^(.-)%s+#.*$") or val:match("^(.-)%s*$")
         local full_path = {}
         for i = 2, depth do

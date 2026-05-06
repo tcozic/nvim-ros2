@@ -146,7 +146,7 @@ end
 
 function M.actions()
   ros_picker({
-    prompt_title = "Call Action",
+    prompt_title = "Active Actions",
     system_cmd = { "ros2", "action", "list" },
     command = "action",
     mode = "info",
@@ -159,7 +159,7 @@ end
 
 function M.services()
   ros_picker({
-    prompt_title = "Call Service",
+    prompt_title = "Active Services",
     system_cmd = { "ros2", "service", "list" },
     command = "service",
     mode = "type",
@@ -187,7 +187,7 @@ function M.topics_echo()
     command = "topic",
     mode = "info",
     args = "",
-    on_select = Ros2.listen_topic, -- [FIX] Use the live listener!
+    on_select = Ros2.listen_topic,
   })
 end
 
@@ -243,7 +243,7 @@ function M.packages()
 end
 
 function M.sniper(subdir)
-  local pkg = Utils.get_package_root(0) -- [FIX]
+  local pkg = Utils.get_package_root(0)
   if not pkg then
     return
   end
@@ -269,26 +269,26 @@ function M.sniper(subdir)
 end
 
 function M.find_files_package()
-  local pkg = Utils.get_package_root(0) -- [FIX]
+  local pkg = Utils.get_package_root(0)
   if pkg then
     Snacks.picker.files({
       cwd = pkg,
       title = "Find in Package: " .. vim.fs.basename(pkg),
     })
   else
-    vim.notify("Not inside a ROS 2 package.", vim.log.levels.WARN)
+    vim.notify("Not inside a ROS 2 package", vim.log.levels.WARN)
   end
 end
 
 function M.grep_package()
-  local pkg = Utils.get_package_root(0) -- [FIX]
+  local pkg = Utils.get_package_root(0)
   if pkg then
     Snacks.picker.grep({
       cwd = pkg,
       title = "Grep in Package: " .. vim.fs.basename(pkg),
     })
   else
-    vim.notify("Not inside a ROS 2 package.", vim.log.levels.WARN)
+    vim.notify("Not inside a ROS 2 package", vim.log.levels.WARN)
   end
 end
 
@@ -327,7 +327,7 @@ function M.saved_payloads()
           if item and item.file then
             vim.schedule(function()
               if vim.api.nvim_buf_is_valid(bufnr) then
-                -- [FIX] Find the actual window holding our scratch buffer
+                -- Find the actual window holding our scratch buffer
                 local target_win = nil
                 for _, win in ipairs(vim.api.nvim_list_wins()) do
                   if vim.api.nvim_win_get_buf(win) == bufnr then
