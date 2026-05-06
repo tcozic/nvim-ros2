@@ -230,12 +230,7 @@ function M.packages()
       confirm = function(picker, item)
         picker:close()
         if item and item.pkg_dir then
-          -- Default to Oil if available, else Lexplore
-          if pcall(require, "oil") then
-            require("oil").open(item.pkg_dir)
-          else
-            vim.cmd("Lexplore " .. item.pkg_dir)
-          end
+          Utils.open_directory(item.pkg_dir)
         end
       end,
     },
@@ -260,11 +255,7 @@ function M.sniper(subdir)
   elseif #files > 1 then
     Snacks.picker.files({ cwd = target, title = subdir .. " Files" })
   else
-    if pcall(require, "oil") then
-      require("oil").open(target)
-    else
-      vim.cmd("Lexplore " .. target)
-    end
+    Utils.open_directory(target)
   end
 end
 

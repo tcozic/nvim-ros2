@@ -65,7 +65,11 @@ Package-aware pickers designed to scope your searches to the specific ROS 2 pack
 - **Smart Attach:** Press `<C-t>` while hovering over a node in the Active Nodes picker to instantly attach the ROS Tuner to its matching file, or `<C-r>` to attach a raw Scratch Proxy.
 - **Topic Echo:** Select an active topic to spawn a live, safely-managed buffer streaming YAML output.
 - **Interface Jumper:** Search `msg`, `srv`, or `action` definitions and press `<CR>` to instantly jump to the source file, resolving via `install` or local `src` directories automatically.
-
+When opening directories via the **Package Hub** or **Snipers**, the plugin automatically detects and uses your preferred file explorer. It currently supports out-of-the-box integration with:
+- [oil.nvim](https://github.com/stevearc/oil.nvim)
+- [mini.files](https://github.com/echasnovski/mini.files)
+- [neo-tree.nvim](https://github.com/nvim-neo-tree/neo-tree.nvim)
+- [nvim-tree.lua](https://github.com/nvim-tree/nvim-tree.lua)
 ### 🚀 The RPC Engine (Services & Actions)
 
 Launch ephemeral, auto-cleaning scratch buffers to execute ROS 2 calls just like Postman or Insomnia. 

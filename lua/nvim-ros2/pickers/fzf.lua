@@ -198,11 +198,7 @@ function M.packages()
         end
         local pkg_dir = selected[1]:match("\t(.*)$")
         if pkg_dir then
-          if pcall(require, "oil") then
-            require("oil").open(pkg_dir)
-          else
-            vim.cmd("Lexplore " .. pkg_dir)
-          end
+          Utils.open_directory(pkg_dir)
         end
       end,
     },
@@ -223,8 +219,10 @@ function M.sniper(subdir)
   local files = vim.split(vim.fn.glob(target .. "/*"), "\n", { trimempty = true })
   if #files == 1 then
     vim.cmd("edit " .. files[1])
-  else
+  elseif #files > 1 then
     require("fzf-lua").files({ cwd = target, prompt = subdir .. " Files> " })
+  else
+    Utils.open_directory(target)
   end
 end
 

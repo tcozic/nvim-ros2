@@ -258,11 +258,8 @@ function M.packages()
           local selection = require("telescope.actions.state").get_selected_entry()
           require("telescope.actions").close(prompt_bufnr)
           if selection and selection.value.pkg_dir then
-            if pcall(require, "oil") then
-              require("oil").open(selection.value.pkg_dir)
-            else
-              vim.cmd("Lexplore " .. selection.value.pkg_dir)
-            end
+            -- Call our centralized utility
+            Utils.open_directory(selection.value.pkg_dir)
           end
         end
         map("i", "<CR>", confirm)
@@ -288,8 +285,10 @@ function M.sniper(subdir)
   local files = vim.split(vim.fn.glob(target .. "/*"), "\n", { trimempty = true })
   if #files == 1 then
     vim.cmd("edit " .. files[1])
-  else
+  elseif #files > 1 then
     require("telescope.builtin").find_files({ cwd = target, prompt_title = subdir .. " Files" })
+  else
+    Utils.open_directory(target)
   end
 end
 

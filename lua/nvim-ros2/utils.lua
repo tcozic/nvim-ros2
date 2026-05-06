@@ -163,4 +163,29 @@ function M.get_workspace_packages(ws_root)
   return packages
 end
 
+--- Opens a directory using the user's preferred file explorer
+--- Falls back to native netrw (Explore) if no popular plugin is found
+function M.open_directory(path)
+  -- 1. Oil.nvim
+  if pcall(require, "oil") then
+    require("oil").open(path)
+
+    -- 2. Mini.files
+  elseif pcall(require, "mini.files") then
+    require("mini.files").open(path)
+
+    -- 3. Neo-tree
+  elseif pcall(require, "neo-tree.command") then
+    require("neo-tree.command").execute({ action = "focus", dir = path })
+
+    -- 4. Nvim-tree
+  elseif pcall(require, "nvim-tree.api") then
+    require("nvim-tree.api").tree.open({ path = path })
+
+    -- 5. Fallback to native netrw
+  else
+    vim.cmd("Explore " .. vim.fn.fnameescape(path))
+  end
+end
+
 return M
