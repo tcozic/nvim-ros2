@@ -90,7 +90,14 @@ function M.resolve_parameter_context(bufnr, pos)
     return nil
   end
 
-  return path_keys[1],
+  local node_parts = {}
+  for i = 1, ros_param_idx - 1 do
+    table.insert(node_parts, path_keys[i])
+  end
+  local node_root = "/" .. table.concat(node_parts, "/")
+  node_root = node_root:gsub("//+", "/") -- Safely normalize slashes
+
+  return node_root,
     param_name,
     value_type,
     value_node and vim.treesitter.get_node_text(value_node, bufnr) or "unknown"
@@ -229,6 +236,9 @@ function M.parse_ros2_dump(dump_text, active_node)
         -- The non-greedy '(.-)' ensures we don't accidentally swallow the whitespace we want to trim.
         local clean_val = val:match("^(.-)%s+#.*$") or val:match("^(.-)%s*$")
         local full_path = {}
+        -- [NOTE] Skip depth 1 (i=1). 'ros2 param dump' places the node's FQN at the top level of the YAML.
+        -- Because we already prepend the 'active_node' FQN string below, we only want to extract
+        -- the actual parameter path starting from depth 2.
         for i = 2, depth do
           if path_stack[i] ~= "ros__parameters" then
             table.insert(full_path, path_stack[i])

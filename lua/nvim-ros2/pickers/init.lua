@@ -90,7 +90,7 @@ end
 
 function M.edit_cmake()
   local Utils = require("nvim-ros2.utils")
-  local pkg = Utils.get_package_root(0) -- [FIX] Updated from find_package_root
+  local pkg = Utils.get_package_root(0)
   if pkg then
     vim.cmd("edit " .. pkg .. "/CMakeLists.txt")
   end
@@ -98,7 +98,7 @@ end
 
 function M.edit_package_xml()
   local Utils = require("nvim-ros2.utils")
-  local pkg = Utils.get_package_root(0) -- [FIX] Updated from find_package_root
+  local pkg = Utils.get_package_root(0)
   if pkg then
     vim.cmd("edit " .. pkg .. "/package.xml")
   end

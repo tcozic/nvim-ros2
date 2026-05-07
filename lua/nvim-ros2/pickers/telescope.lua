@@ -15,7 +15,7 @@ local M = {}
 
 function M.interfaces()
   local command = { "ros2", "interface", "list" }
-  local raw_output = Ros2.get_command_output(command) -- [FIX] Using our centralized Utils call
+  local raw_output = Ros2.get_command_output(command)
   if not raw_output then
     return
   end
@@ -212,7 +212,7 @@ function M.topics_echo()
     command = "topic",
     mode = "info",
     args = "",
-    on_select = Ros2.listen_topic, -- [FIX] Use the live listener!
+    on_select = Ros2.listen_topic,
   }
   ros_picker(opts)
 end
@@ -332,7 +332,7 @@ function M.packages()
 end
 
 function M.sniper(subdir)
-  local pkg = Utils.get_package_root(0) -- [FIX]
+  local pkg = Utils.get_package_root(0)
   if not pkg then
     return
   end
@@ -354,7 +354,7 @@ function M.sniper(subdir)
 end
 
 function M.find_files_package()
-  local pkg = Utils.get_package_root(0) -- [FIX]
+  local pkg = Utils.get_package_root(0)
   if pkg then
     require("telescope.builtin").find_files({
       cwd = pkg,
@@ -366,7 +366,7 @@ function M.find_files_package()
 end
 
 function M.grep_package()
-  local pkg = Utils.get_package_root(0) -- [FIX]
+  local pkg = Utils.get_package_root(0)
   if pkg then
     require("telescope.builtin").live_grep({
       cwd = pkg,

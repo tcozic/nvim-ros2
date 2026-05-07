@@ -12,31 +12,42 @@ vim.api.nvim_create_autocmd("BufWritePost", {
   group = cache_group,
   callback = function()
     _pkg_cache = {}
-    _merged_cache = {} -- [FIX] Invalidate merged cache as well
+    _merged_cache = {}
   end,
 })
--- Private Helper: Handles both Buffer IDs and String Paths (like oil://)
+-- Private Helper: Handles both Buffer IDs and String Paths (Explorer Agnostic).
+-- Note: The regex aggressively strips ANY protocol prefix (e.g., oil://, neo-tree://).
+-- It will also strip remote protocols like scp:// or ssh://, silently falling back to getcwd().
+-- This is an acceptable trade-off for local ROS 2 workspace generality.
 local function get_search_path(target)
   local path = ""
+  -- 1. Resolve input to a string path
   if type(target) == "string" then
     path = target
-    if path:match("^oil://") then
-      path = path:sub(7)
-    end
   else
     path = vim.api.nvim_buf_get_name(target or 0)
   end
+  -- 2. Universally strip ANY protocol prefix (e.g., oil://, neo-tree://, etc.)
+  -- Matches any word starting with a letter, followed by letters/numbers/hyphens, ending in "://"
+  path = path:gsub("^%a[%w%-]+://", "")
 
+  -- 3. Fallback to cwd if empty
   if path == "" then
     return vim.fn.getcwd()
   end
 
-  -- If it's a directory (like from Oil), return it directly. Otherwise, get the parent.
+  -- 4. Check real disk existence.
+  -- If it's a virtual plugin buffer (like 'NvimTree_1'), stat will be nil.
   local stat = vim.uv.fs_stat(path)
-  if stat and stat.type == "directory" then
-    return path
+  if stat then
+    if stat.type == "directory" then
+      return path
+    end
+    return vim.fs.dirname(path)
   end
-  return vim.fs.dirname(path)
+
+  -- Fallback if the path doesn't actually exist on disk
+  return vim.fn.getcwd()
 end
 
 function M.normalize_fqn(name)

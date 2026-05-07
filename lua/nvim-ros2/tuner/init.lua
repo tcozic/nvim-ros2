@@ -27,6 +27,67 @@ local function is_systemic(param_name)
   return false
 end
 
+local function parse_yaml_footprints(lines)
+  local file_data = { root_keys = {}, footprints = {} }
+  local path_stack = {}
+  local ros_params_depth = nil
+  local current_root = nil
+
+  for _, line in ipairs(lines) do
+    -- Cleans up the line by removing inline comments and trailing whitespace.
+    -- "^(.-)%s+#.*$" captures everything before a space-padded '#' comment.
+    -- "^(.-)%s*$" acts as a fallback to simply trim trailing whitespace if no comment exists.
+    -- The non-greedy '(.-)' ensures we don't accidentally swallow the whitespace we want to trim.
+    local clean_line = line:match("^(.-)%s+#.*$") or line:match("^(.-)%s*$")
+    -- Parses the line to extract its leading indentation and the YAML key name.
+    -- "^(%s*)" captures all leading whitespace to determine nesting depth.
+    -- "['\"]?([%w_%-%.%/%*]+)['\"]?:" captures the key name (ignoring optional quotes) up to the colon.
+    local indent, key = clean_line:match("^(%s*)['\"]?([%w_%-%.%/%*]+)['\"]?:")
+
+    if key then
+      local depth = #indent
+
+      -- Clear any stack entries that are at a deeper or equal indent level
+      while #path_stack > 0 and path_stack[#path_stack].depth >= depth do
+        table.remove(path_stack)
+      end
+      table.insert(path_stack, { depth = depth, key = key })
+
+      if ros_params_depth and depth <= ros_params_depth then
+        ros_params_depth = nil
+        current_root = nil
+      end
+
+      if key == "ros__parameters" then
+        ros_params_depth = depth
+        local root_parts = {}
+        for i = 1, #path_stack - 1 do
+          table.insert(root_parts, path_stack[i].key)
+        end
+        current_root = "/" .. table.concat(root_parts, "/")
+        current_root = current_root:gsub("//+", "/") -- Safely normalize slashes
+
+        if not file_data.footprints[current_root] then
+          table.insert(file_data.root_keys, current_root)
+          file_data.footprints[current_root] = {}
+        end
+      elseif ros_params_depth and depth > ros_params_depth and current_root then
+        local param_parts = {}
+        for i = 1, #path_stack do
+          if path_stack[i].depth > ros_params_depth then
+            table.insert(param_parts, path_stack[i].key)
+          end
+        end
+        local param_name = table.concat(param_parts, ".")
+        if not is_systemic(param_name) then
+          file_data.footprints[current_root][param_name] = true
+        end
+      end
+    end
+  end
+  return file_data
+end
+
 local function get_state(bufnr)
   if not buffer_states[bufnr] then
     buffer_states[bufnr] =
@@ -55,7 +116,7 @@ vim.api.nvim_create_autocmd("BufWritePost", {
 -- Lifecycle & Orchestration
 -- =====================================================================
 
-function M.start_session()
+function M.start_session(preselected_node)
   local bufnr = vim.api.nvim_get_current_buf()
   if vim.b[bufnr].ros_tuner_active then
     vim.notify("ROS Tuner already active.", vim.log.levels.WARN)
@@ -73,16 +134,21 @@ function M.start_session()
         end
         local map = mappings[idx]
         if map.is_instanced then
-          vim.ui.select(
-            map.tied,
-            { prompt = "Select instance for '" .. map.yaml_root .. "':" },
-            function(choice)
-              if choice then
-                map.fqn = choice
-                resolve(idx + 1)
+          if preselected_node and vim.tbl_contains(map.tied, preselected_node) then
+            map.fqn = preselected_node
+            resolve(idx + 1)
+          else
+            vim.ui.select(
+              map.tied,
+              { prompt = "Select instance for '" .. map.yaml_root .. "':" },
+              function(choice)
+                if choice then
+                  map.fqn = choice
+                  resolve(idx + 1)
+                end
               end
-            end
-          )
+            )
+          end
         else
           resolve(idx + 1)
         end
@@ -93,6 +159,7 @@ function M.start_session()
 end
 
 function M.attach_node(target_node, force_scratch)
+  local fqn = Utils.normalize_fqn(target_node)
   if force_scratch then
     return M.open_synthetic_proxy(target_node)
   end
@@ -103,7 +170,9 @@ function M.attach_node(target_node, force_scratch)
     elseif #candidates == 1 then
       -- Fast Path: Exactly 1 match, open it directly
       vim.cmd("edit " .. candidates[1].path)
-      vim.schedule(M.start_session)
+      vim.schedule(function()
+        M.start_session(fqn)
+      end)
     else
       vim.ui.select(candidates, {
         prompt = "Select config for " .. target_node .. ":",
@@ -113,7 +182,9 @@ function M.attach_node(target_node, force_scratch)
       }, function(choice)
         if choice then
           vim.cmd("edit " .. choice.path)
-          vim.schedule(M.start_session)
+          vim.schedule(function()
+            M.start_session(fqn)
+          end)
         end
       end)
     end
@@ -142,10 +213,9 @@ function M.open_synthetic_proxy(node_name)
       "nofile", "wipe", "yaml"
     local safe_node_name = node_name:gsub("^/", ""):gsub("/", "_")
     pcall(vim.api.nvim_buf_set_name, scratch, "ROS_LIVE_" .. safe_node_name)
-    local dump_root_key = Utils.get_base_name(Utils.normalize_fqn(node_name))
-    vim.b[scratch].ros_mappings = { [dump_root_key] = node_name }
+    local fqn = Utils.normalize_fqn(node_name)
+    vim.b[scratch].ros_mappings = { [fqn] = node_name }
     vim.b[scratch].is_synthetic = true
-
     local lines = vim.split(dump, "\n", { trimempty = true })
     vim.api.nvim_buf_set_lines(scratch, 0, -1, false, lines)
 
@@ -183,7 +253,6 @@ function M.setup_scratch_buffer(orig_buf, mappings)
   elseif open_mode == "split" or open_mode == "vsplit" then
     vim.cmd("vsplit")
   elseif open_mode == "hide" then
-    -- [FIX] Explicitly handle hide: no window split command,
     -- buffer will just replace current window's buffer below.
   end
   vim.api.nvim_set_current_buf(scratch)
@@ -192,7 +261,8 @@ function M.setup_scratch_buffer(orig_buf, mappings)
   pcall(vim.api.nvim_buf_set_name, scratch, "ROS_TUNER_" .. orig_name)
   local mappings_dict = {}
   for _, m in ipairs(mappings) do
-    mappings_dict[m.yaml_root] = m.fqn
+    local normalized_root = Utils.normalize_fqn(m.yaml_root)
+    mappings_dict[normalized_root] = m.fqn
   end
   vim.b[scratch].ros_mappings = mappings_dict
 
@@ -242,6 +312,52 @@ function M.setup_crucible_autocmds(scratch, orig_buf, orig_win)
       vim.schedule(function()
         pcall(vim.api.nvim_buf_delete, scratch, { force = true })
       end)
+    end,
+  })
+  vim.api.nvim_create_autocmd("QuitPre", {
+    group = group,
+    buffer = scratch,
+    callback = function()
+      local open_mode = Config.options.tuner_open_mode or "split"
+      if
+        open_mode == "hide"
+        and not vim.b[scratch].crucible_active
+        and vim.api.nvim_buf_is_valid(orig_buf)
+      then
+        local cur_win = vim.api.nvim_get_current_win()
+        -- Silently spawn the original buffer right before the current window dies
+        vim.cmd("leftabove sbuffer " .. orig_buf)
+        -- Return focus to the Tuner so `:q` kills it, leaving the original buffer untouched
+        vim.api.nvim_set_current_win(cur_win)
+      end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
+    group = group,
+    buffer = scratch,
+    callback = function()
+      local open_mode = Config.options.tuner_open_mode or "split"
+      if
+        open_mode == "hide"
+        and not vim.b[scratch].crucible_active
+        and vim.api.nvim_buf_is_valid(orig_buf)
+      then
+        local target_win = nil
+        for _, win in ipairs(vim.api.nvim_list_wins()) do
+          if vim.api.nvim_win_get_buf(win) == scratch then
+            target_win = win
+            break
+          end
+        end
+        if target_win then
+          vim.schedule(function()
+            if vim.api.nvim_win_is_valid(target_win) and vim.api.nvim_buf_is_valid(orig_buf) then
+              pcall(vim.api.nvim_win_set_buf, target_win, orig_buf)
+            end
+          end)
+        end
+      end
     end,
   })
   vim.api.nvim_create_autocmd("BufWriteCmd", {
@@ -391,61 +507,84 @@ function M.reconcile_live_parameters(scratch_buf, global_live_params, force_pull
   end
 
   local current_lines = vim.api.nvim_buf_get_lines(scratch_buf, 0, -1, false)
-  local current_node, offset = nil, 0
+  local offset = 0
+  local path_stack = {}
 
   for i, line in ipairs(current_lines) do
-    local possible_node = line:match("^/?([%w_%-%.%/]+):")
-    if possible_node and possible_node ~= "ros__parameters" then
-      current_node = possible_node
-    elseif line:match("^%s*ros__parameters:") and current_node and missing_params[current_node] then
-      local block_end_idx = i
-      for k = i + 1, #current_lines do
-        if current_lines[k]:match("^[%w_%-%.%/%*]+:") then
-          break
+    local clean_line = line:match("^(.-)%s+#.*$") or line:match("^(.-)%s*$")
+    local indent, key = clean_line:match("^(%s*)['\"]?([%w_%-%.%/%*]+)['\"]?:")
+
+    if key then
+      local depth = #indent
+      while #path_stack > 0 and path_stack[#path_stack].depth >= depth do
+        table.remove(path_stack)
+      end
+      table.insert(path_stack, { depth = depth, key = key })
+
+      if key == "ros__parameters" then
+        local root_parts = {}
+        for j = 1, #path_stack - 1 do
+          table.insert(root_parts, path_stack[j].key)
         end
-        block_end_idx = k
-      end
+        local current_node = "/" .. table.concat(root_parts, "/")
+        current_node = current_node:gsub("//+", "/")
 
-      local base_indent_str = line:match("^(%s*)")
-      local missing_tree = Engine.build_nested_tree(missing_params[current_node])
-      local pending_insertions = {}
-      Engine.compute_tree_insertions(
-        missing_tree,
-        i + 1,
-        block_end_idx,
-        base_indent_str,
-        current_lines,
-        pending_insertions
-      )
-
-      local insertion_list = {}
-      for _, v in pairs(pending_insertions) do
-        table.insert(insertion_list, v)
-      end
-      table.sort(insertion_list, function(a, b)
-        return a.idx ~= b.idx and a.idx > b.idx or a.depth < b.depth
-      end)
-
-      local node_added_lines = 0
-      for _, data in ipairs(insertion_list) do
-        local insert_pos = data.idx + offset
-        vim.api.nvim_buf_set_lines(scratch_buf, insert_pos, insert_pos, false, data.lines)
-        for j, mark_needed in ipairs(data.marks) do
-          if mark_needed then
-            UI.set_sync_extmark(
-              scratch_buf,
-              insert_pos + j - 1,
-              "  # [Discovered]",
-              nil,
-              "discovered"
-            )
-            injected_count = injected_count + 1
+        if missing_params[current_node] then
+          local block_end_idx = i
+          for k = i + 1, #current_lines do
+            local next_clean = current_lines[k]:match("^(.-)%s+#.*$")
+              or current_lines[k]:match("^(.-)%s*$")
+            if next_clean ~= "" then
+              local next_indent_str = next_clean:match("^(%s*)%S")
+              if next_indent_str and #next_indent_str <= depth then
+                break
+              end
+            end
+            block_end_idx = k
           end
+
+          local base_indent_str = line:match("^(%s*)")
+          local missing_tree = Engine.build_nested_tree(missing_params[current_node])
+          local pending_insertions = {}
+          Engine.compute_tree_insertions(
+            missing_tree,
+            i + 1,
+            block_end_idx,
+            base_indent_str,
+            current_lines,
+            pending_insertions
+          )
+
+          local insertion_list = {}
+          for _, v in pairs(pending_insertions) do
+            table.insert(insertion_list, v)
+          end
+          table.sort(insertion_list, function(a, b)
+            return a.idx ~= b.idx and a.idx > b.idx or a.depth < b.depth
+          end)
+
+          local node_added_lines = 0
+          for _, data in ipairs(insertion_list) do
+            local insert_pos = data.idx + offset
+            vim.api.nvim_buf_set_lines(scratch_buf, insert_pos, insert_pos, false, data.lines)
+            for j, mark_needed in ipairs(data.marks) do
+              if mark_needed then
+                UI.set_sync_extmark(
+                  scratch_buf,
+                  insert_pos + j - 1,
+                  "  # [Discovered]",
+                  nil,
+                  "discovered"
+                )
+                injected_count = injected_count + 1
+              end
+            end
+            node_added_lines = node_added_lines + #data.lines
+          end
+          offset = offset + node_added_lines
+          missing_params[current_node] = nil
         end
-        node_added_lines = node_added_lines + #data.lines
       end
-      offset = offset + node_added_lines
-      missing_params[current_node] = nil
     end
   end
 
@@ -828,29 +967,14 @@ function M.match_node_to_file(fqn, cb, bufnr)
 
             local file_handle = io.open(f, "r")
             if file_handle then
+              local lines = {}
               for line in file_handle:lines() do
-                local r_key = line:match("^([%w_%-%.%/%*]+):%s*$")
-                if r_key then
-                  current_root = r_key
-                  has_ros_params = false -- Reset for the new root key
-                elseif current_root then
-                  -- Ensure this block is actually a ROS 2 parameter block
-                  if line:match("^%s+ros__parameters:") then
-                    if not has_ros_params then
-                      table.insert(file_data.root_keys, current_root)
-                      file_data.footprints[current_root] = file_data.footprints[current_root] or {}
-                      has_ros_params = true
-                    end
-                  elseif has_ros_params then
-                    -- Only index parameters if we are safely inside a ros__parameters block
-                    local p_key = line:match("^%s+([%w_%-%.]+):")
-                    if p_key and not is_systemic(p_key) then
-                      file_data.footprints[current_root][p_key] = true
-                    end
-                  end
-                end
+                table.insert(lines, line)
               end
               file_handle:close()
+
+              -- Use the new indentation-aware parser
+              local file_data = parse_yaml_footprints(lines)
 
               -- Only cache the file if we actually found valid ROS 2 blocks inside it
               if #file_data.root_keys > 0 then
@@ -872,30 +996,8 @@ function M.match_file_to_node(bufnr, cb)
   local filename =
     vim.fs.basename(vim.api.nvim_buf_get_name(bufnr)):gsub("%.yaml$", ""):gsub("%.param$", "")
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local file_data, footprints, current_root = { root_keys = {} }, {}, nil
-  local has_ros_params = false
-  for _, line in ipairs(lines) do
-    local r_key = line:match("^([%w_%-%.%/%*]+):%s*$")
-    if r_key then
-      current_root = r_key
-      has_ros_params = false -- Reset for the new root key
-    elseif current_root then
-      -- Ensure this block is actually a ROS 2 parameter block
-      if line:match("^%s+ros__parameters:") then
-        if not has_ros_params then
-          table.insert(file_data.root_keys, current_root)
-          footprints[current_root] = footprints[current_root] or {}
-          has_ros_params = true
-        end
-      elseif has_ros_params then
-        -- Only index parameters if we are safely inside a ros__parameters block
-        local p_key = line:match("^%s+([%w_%-%.]+):")
-        if p_key and not is_systemic(p_key) then
-          footprints[current_root][p_key] = true
-        end
-      end
-    end
-  end
+  local file_data = parse_yaml_footprints(lines)
+  local footprints = file_data.footprints
   RosApi.list_nodes(function(active_nodes)
     if #active_nodes == 0 then
       return cb({})

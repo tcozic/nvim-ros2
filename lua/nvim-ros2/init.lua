@@ -98,11 +98,10 @@ function M.setup(opts)
     end, {
       nargs = "*",
       complete = function(arglead, cmdline)
-        -- [FIX] Robust routing: collapse multiple spaces and check the prefix
         local normalized_cmd = cmdline:gsub("^%s*", ""):gsub("%s+", " ")
         if vim.startswith(normalized_cmd, "RosTune resync") then
           return vim.tbl_filter(function(v)
-            return vim.startswith(v, arglead) -- [FIX] Safe prefix matching
+            return vim.startswith(v, arglead) -- Safe prefix matching
           end, { "--pull" })
         end
         if normalized_cmd:match("^RosTune attach [%w_/%-]+") then
@@ -112,7 +111,7 @@ function M.setup(opts)
         end
         -- Default completion for the base command
         return vim.tbl_filter(function(v)
-          return vim.startswith(v, arglead) -- [FIX] Safe prefix matching
+          return vim.startswith(v, arglead) -- Safe prefix matching
         end, { "attach", "resync" })
       end,
     })

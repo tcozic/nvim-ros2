@@ -242,6 +242,29 @@ function M.packages()
       preview = function(ctx)
         local item = ctx.item
 
+        -- Helper to trigger the native file/directory previewer
+        local function show_native()
+          -- Safely invoke the native Snacks previewer (renders both files and beautiful directory trees)
+          local ok = pcall(function()
+            Snacks.picker.preview.file(ctx)
+          end)
+          if not ok then
+            ok = pcall(function()
+              require("snacks.picker.preview").file(ctx)
+            end)
+          end
+
+          -- Ultimate fallback ONLY if the Snacks API is entirely unavailable/incompatible
+          if not ok then
+            vim.schedule(function()
+              ctx.preview:set_lines(
+                vim.fn.systemlist("ls -la " .. (item.file or item.pkg_dir or "."))
+              )
+              ctx.preview:highlight({ lang = "bash" })
+            end)
+          end
+        end
+
         -- 1. Lazy Path Resolution for Global Packages
         if item.is_global and not item.pkg_dir then
           ctx.preview:set_lines({ "Loading global package path..." })
@@ -250,10 +273,10 @@ function M.packages()
               if out.code == 0 and out.stdout ~= "" then
                 local prefix = out.stdout:gsub("%s+", "")
                 item.pkg_dir = prefix
-                local share_dir = prefix .. "/share/" .. item.text
-                -- Re-paint the buffer directly (Safe, native UI refresh)
-                ctx.preview:set_lines(vim.fn.systemlist("ls -la " .. share_dir))
-                ctx.preview:highlight({ lang = "bash" })
+                item.file = prefix .. "/share/" .. item.text
+
+                -- Hand off to the native tree renderer
+                show_native()
               else
                 ctx.preview:set_lines({ "Failed to locate package prefix." })
               end
@@ -262,18 +285,18 @@ function M.packages()
           return
         end
 
-        -- Fallback if already resolved or missing README
-        local target = item.is_global and (item.pkg_dir .. "/share/" .. item.text) or item.pkg_dir
-        ctx.preview:set_lines(vim.fn.systemlist("ls -la " .. target))
-        ctx.preview:highlight({ lang = "bash" })
+        -- 2. Ensure item.file is set for global items that are already resolved
+        if item.is_global and item.pkg_dir and not item.file then
+          item.file = item.pkg_dir .. "/share/" .. item.text
+        end
 
-        -- 2. Ensure item.file is set for fallback local packages without a README
+        -- 3. Ensure item.file is set for local items without a README
         if not item.file and item.pkg_dir then
           item.file = item.pkg_dir
         end
 
-        -- 3. Delegate back to the beautiful native Snacks file/directory previewer!
-        Snacks.picker.preview.file(ctx)
+        -- 4. Delegate entirely to the beautiful native Snacks file/directory previewer!
+        show_native()
       end,
       actions = {
         confirm = function(picker, item)

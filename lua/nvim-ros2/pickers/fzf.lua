@@ -2,7 +2,7 @@ local M = {}
 local Utils = require("nvim-ros2.utils")
 local Ros2 = require("nvim-ros2.api.ros2")
 local function ros_picker(opts)
-  local output = Ros2.get_command_output(opts.system_cmd) -- [FIX] Use Utils
+  local output = Ros2.get_command_output(opts.system_cmd)
   if not output then
     return
   end
@@ -51,7 +51,7 @@ end
 
 function M.interfaces()
   local command = { "ros2", "interface", "list" }
-  local raw_output = Ros2.get_command_output(command) -- [FIX] Use Utils
+  local raw_output = Ros2.get_command_output(command)
   if not raw_output then
     return
   end
@@ -162,7 +162,7 @@ function M.topics_echo()
     command = "topic",
     mode = "info",
     args = "",
-    on_select = Ros2.listen_topic, -- [FIX] Use the live listener!
+    on_select = Ros2.listen_topic,
   })
 end
 
@@ -242,7 +242,7 @@ function M.packages()
 end
 
 function M.sniper(subdir)
-  local pkg = Utils.get_package_root(0) -- [FIX]
+  local pkg = Utils.get_package_root(0)
   if not pkg then
     return
   end
@@ -263,7 +263,7 @@ function M.sniper(subdir)
 end
 
 function M.find_files_package()
-  local pkg = Utils.get_package_root(0) -- [FIX]
+  local pkg = Utils.get_package_root(0)
   if pkg then
     require("fzf-lua").files({ cwd = pkg, prompt = "Find in Package> " })
   else
@@ -272,7 +272,7 @@ function M.find_files_package()
 end
 
 function M.grep_package()
-  local pkg = Utils.get_package_root(0) -- [FIX]
+  local pkg = Utils.get_package_root(0)
   if pkg then
     require("fzf-lua").live_grep({ cwd = pkg, prompt = "Grep in Package> " })
   else
