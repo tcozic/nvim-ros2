@@ -171,38 +171,74 @@ end
 
 function M.packages()
   local ws_root = Utils.get_workspace_root(0)
-  local workspace_packages = Utils.get_workspace_packages(ws_root)
+  local config = require("nvim-ros2.config").options
+  local show_global = config.pickers
+    and config.pickers.packages
+    and config.pickers.packages.show_global ~= false
 
-  if vim.tbl_isempty(workspace_packages) then
-    vim.notify("No ROS 2 packages found in workspace", vim.log.levels.WARN)
-    return
-  end
+  Utils.get_merged_packages(ws_root, show_global, function(items)
+    if #items == 0 then
+      vim.notify("No ROS 2 packages found.", vim.log.levels.WARN)
+      return
+    end
 
-  -- Format strings for FZF to parse
-  local items = {}
-  for pkg_name, pkg_dir in pairs(workspace_packages) do
-    -- We hide the path behind a delimiter so we can extract it easily on selection
-    table.insert(items, string.format("%s 📦\t%s", pkg_name, pkg_dir))
-  end
+    local fzf_items = {}
+    for _, item in ipairs(items) do
+      local icon = item.is_global and "🌐" or "📦"
+      -- Hide state inside the string: Text Icon \t is_global \t pkg_dir
+      local hidden_data = string.format("%s\t%s", tostring(item.is_global), item.pkg_dir or "")
+      table.insert(fzf_items, string.format("%s %s\t%s", item.text, icon, hidden_data))
+    end
 
-  require("fzf-lua").fzf_exec(items, {
-    prompt = "ROS 2 Packages> ",
-    previewer = "builtin",
-    fn_transform = function(x)
-      return require("fzf-lua.make_entry").file(x:match("\t(.*)$"))
-    end,
-    actions = {
-      ["default"] = function(selected)
+    require("fzf-lua").fzf_exec(fzf_items, {
+      prompt = "ROS 2 Packages> ",
+      preview = function(selected)
         if not selected or #selected == 0 then
-          return
+          return {}
         end
-        local pkg_dir = selected[1]:match("\t(.*)$")
-        if pkg_dir then
-          Utils.open_directory(pkg_dir)
+        local display, is_global_str, pkg_dir = selected[1]:match("^(.-)\t(.-)\t(.*)$")
+        local pkg_name = display:match("^(%S+)")
+        local is_global = is_global_str == "true"
+
+        if is_global and pkg_dir == "" then
+          -- FZF's preview is synchronous. A slight block (50ms) here on hover is standard for its engine
+          local out = vim.fn.systemlist("ros2 pkg prefix " .. pkg_name)
+          if #out > 0 then
+            local prefix = out[1]:gsub("%s+", "")
+            return vim.fn.systemlist("ls -la " .. prefix .. "/share/" .. pkg_name)
+          end
+          return { "Failed to resolve path." }
+        else
+          local target = is_global and (pkg_dir .. "/share/" .. pkg_name) or pkg_dir
+          return vim.fn.systemlist("ls -la " .. target)
         end
       end,
-    },
-  })
+      actions = {
+        ["default"] = function(selected)
+          if not selected or #selected == 0 then
+            return
+          end
+          local display, is_global_str, pkg_dir = selected[1]:match("^(.-)\t(.-)\t(.*)$")
+          local pkg_name = display:match("^(%S+)")
+          local is_global = is_global_str == "true"
+
+          if pkg_dir ~= "" then
+            local target = is_global and (pkg_dir .. "/share/" .. pkg_name) or pkg_dir
+            Utils.open_directory(target)
+          else
+            vim.system({ "ros2", "pkg", "prefix", pkg_name }, { text = true }, function(out)
+              vim.schedule(function()
+                if out.code == 0 and out.stdout ~= "" then
+                  local prefix = out.stdout:gsub("%s+", "")
+                  Utils.open_directory(prefix .. "/share/" .. pkg_name)
+                end
+              end)
+            end)
+          end
+        end,
+      },
+    })
+  end)
 end
 
 function M.sniper(subdir)

@@ -193,48 +193,119 @@ end
 
 function M.packages()
   local ws_root = Utils.get_workspace_root(0)
+  local config = require("nvim-ros2.config").options
 
-  -- 1. Fetch the pre-parsed package dictionary from Utils
-  local workspace_packages = Utils.get_workspace_packages(ws_root)
-
-  if vim.tbl_isempty(workspace_packages) then
-    vim.notify("No ROS 2 packages found in workspace.", vim.log.levels.WARN)
-    return
+  local show_global = true
+  if config.pickers and config.pickers.packages and config.pickers.packages.show_global ~= nil then
+    show_global = config.pickers.packages.show_global
   end
 
-  -- 2. Build the picker items array
-  local items = {}
-  for pkg_name, pkg_dir in pairs(workspace_packages) do
-    -- Smart Preview: Prioritize README, fallback to Folder Tree
-    local preview_file = pkg_dir
-    for _, v in ipairs({ "/README.md", "/README" }) do
-      if vim.uv.fs_stat(pkg_dir .. v) then
-        preview_file = pkg_dir .. v
-        break
-      end
+  Utils.get_merged_packages(ws_root, show_global, function(base_items)
+    if #base_items == 0 then
+      vim.notify("No ROS 2 packages found.", vim.log.levels.WARN)
+      return
     end
 
-    table.insert(items, {
-      text = pkg_name .. " 📦",
-      pkg_dir = pkg_dir,
-      file = preview_file, -- Triggers native Snacks previewer (tree or markdown)
-    })
-  end
+    local items = {}
+    for _, item in ipairs(base_items) do
+      local preview_file = item.pkg_dir
 
-  -- 3. Launch the picker
-  Snacks.picker.pick({
-    title = "ROS 2 Packages",
-    items = items,
-    format = "text",
-    actions = {
-      confirm = function(picker, item)
-        picker:close()
-        if item and item.pkg_dir then
-          Utils.open_directory(item.pkg_dir)
+      -- Attempt to locate README for local packages
+      if not item.is_global and item.pkg_dir then
+        for _, v in ipairs({ "/README.md", "/README" }) do
+          if vim.uv.fs_stat(item.pkg_dir .. v) then
+            preview_file = item.pkg_dir .. v
+            break
+          end
         end
+      end
+
+      table.insert(items, {
+        text = item.text,
+        icon = item.is_global and "🌐" or "📦",
+        pkg_dir = item.pkg_dir,
+        file = preview_file,
+        is_global = item.is_global,
+      })
+    end
+
+    Snacks.picker.pick({
+      title = "ROS 2 Packages",
+      items = items,
+      format = function(item, _)
+        local hl = item.is_global and "Comment" or "Normal"
+        return {
+          { item.icon .. " ", "Normal" },
+          { item.text, hl },
+        }
       end,
-    },
-  })
+      preview = function(ctx)
+        local item = ctx.item
+
+        -- 1. Lazy Path Resolution for Global Packages
+        if item.is_global and not item.pkg_dir then
+          ctx.preview:set_lines({ "Loading global package path..." })
+          vim.system({ "ros2", "pkg", "prefix", item.text }, { text = true }, function(out)
+            vim.schedule(function()
+              if out.code == 0 and out.stdout ~= "" then
+                local prefix = out.stdout:gsub("%s+", "")
+                item.pkg_dir = prefix
+                local share_dir = prefix .. "/share/" .. item.text
+                -- Re-paint the buffer directly (Safe, native UI refresh)
+                ctx.preview:set_lines(vim.fn.systemlist("ls -la " .. share_dir))
+                ctx.preview:highlight({ lang = "bash" })
+              else
+                ctx.preview:set_lines({ "Failed to locate package prefix." })
+              end
+            end)
+          end)
+          return
+        end
+
+        -- Fallback if already resolved or missing README
+        local target = item.is_global and (item.pkg_dir .. "/share/" .. item.text) or item.pkg_dir
+        ctx.preview:set_lines(vim.fn.systemlist("ls -la " .. target))
+        ctx.preview:highlight({ lang = "bash" })
+
+        -- 2. Ensure item.file is set for fallback local packages without a README
+        if not item.file and item.pkg_dir then
+          item.file = item.pkg_dir
+        end
+
+        -- 3. Delegate back to the beautiful native Snacks file/directory previewer!
+        Snacks.picker.preview.file(ctx)
+      end,
+      actions = {
+        confirm = function(picker, item)
+          picker:close()
+          if not item then
+            return
+          end
+
+          -- If resolved (local, or hovered global)
+          if item.pkg_dir then
+            local target = item.is_global and (item.pkg_dir .. "/share/" .. item.text)
+              or item.pkg_dir
+            Utils.open_directory(target)
+
+            -- If skipped preview and confirmed immediately (Lazy fetch)
+          elseif item.is_global then
+            vim.notify("Resolving global package...", vim.log.levels.INFO)
+            vim.system({ "ros2", "pkg", "prefix", item.text }, { text = true }, function(out)
+              vim.schedule(function()
+                if out.code == 0 and out.stdout ~= "" then
+                  local prefix = out.stdout:gsub("%s+", "")
+                  Utils.open_directory(prefix .. "/share/" .. item.text)
+                else
+                  vim.notify("Could not find package path", vim.log.levels.ERROR)
+                end
+              end)
+            end)
+          end
+        end,
+      },
+    })
+  end)
 end
 
 function M.sniper(subdir)

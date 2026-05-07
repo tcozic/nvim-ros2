@@ -222,52 +222,113 @@ end
 
 function M.packages()
   local ws_root = Utils.get_workspace_root(0)
-  local workspace_packages = Utils.get_workspace_packages(ws_root)
+  local config = require("nvim-ros2.config").options
+  local show_global = config.pickers
+    and config.pickers.packages
+    and config.pickers.packages.show_global ~= false
 
-  if vim.tbl_isempty(workspace_packages) then
-    vim.notify("No ROS 2 packages found in workspace", vim.log.levels.WARN)
-    return
-  end
+  Utils.get_merged_packages(ws_root, show_global, function(items)
+    if #items == 0 then
+      vim.notify("No ROS 2 packages found.", vim.log.levels.WARN)
+      return
+    end
 
-  local results = {}
-  for pkg_name, pkg_dir in pairs(workspace_packages) do
-    table.insert(results, {
-      display = pkg_name .. " 📦",
-      ordinal = pkg_name,
-      pkg_dir = pkg_dir,
-    })
-  end
+    local results = {}
+    for _, item in ipairs(items) do
+      table.insert(results, {
+        display = item.text .. (item.is_global and " 🌐" or " 📦"),
+        ordinal = item.text,
+        pkg_dir = item.pkg_dir,
+        is_global = item.is_global,
+      })
+    end
 
-  require("telescope.pickers")
-    .new({}, {
-      prompt_title = "ROS 2 Packages",
-      finder = require("telescope.finders").new_table({
-        results = results,
-        entry_maker = function(entry)
-          return {
-            value = entry,
-            display = entry.display,
-            ordinal = entry.ordinal,
-            path = entry.pkg_dir, -- Allows standard Telescope file previewers to work
-          }
-        end,
-      }),
-      sorter = require("telescope.config").values.generic_sorter({}),
-      attach_mappings = function(prompt_bufnr, map)
-        local confirm = function()
-          local selection = require("telescope.actions.state").get_selected_entry()
-          require("telescope.actions").close(prompt_bufnr)
-          if selection and selection.value.pkg_dir then
-            -- Call our centralized utility
-            Utils.open_directory(selection.value.pkg_dir)
+    require("telescope.pickers")
+      .new({}, {
+        prompt_title = "ROS 2 Packages",
+        finder = require("telescope.finders").new_table({
+          results = results,
+          entry_maker = function(entry)
+            return { value = entry, display = entry.display, ordinal = entry.ordinal }
+          end,
+        }),
+        sorter = require("telescope.config").values.generic_sorter({}),
+        previewer = require("telescope.previewers").new_buffer_previewer({
+          title = "Package Content",
+          define_preview = function(self, entry, _)
+            local item = entry.value
+            if item.is_global and not item.pkg_dir then
+              vim.api.nvim_buf_set_lines(
+                self.state.bufnr,
+                0,
+                -1,
+                false,
+                { "Loading global package path..." }
+              )
+              vim.system({ "ros2", "pkg", "prefix", item.ordinal }, { text = true }, function(out)
+                vim.schedule(function()
+                  if not vim.api.nvim_buf_is_valid(self.state.bufnr) then
+                    return
+                  end
+                  if out.code == 0 and out.stdout ~= "" then
+                    item.pkg_dir = out.stdout:gsub("%s+", "")
+                    local share_dir = item.pkg_dir .. "/share/" .. item.ordinal
+                    vim.api.nvim_buf_set_lines(
+                      self.state.bufnr,
+                      0,
+                      -1,
+                      false,
+                      vim.fn.systemlist("ls -la " .. share_dir)
+                    )
+                    require("telescope.previewers.utils").highlighter(self.state.bufnr, "bash")
+                  end
+                end)
+              end)
+            else
+              local target = item.is_global and (item.pkg_dir .. "/share/" .. item.ordinal)
+                or item.pkg_dir
+              vim.api.nvim_buf_set_lines(
+                self.state.bufnr,
+                0,
+                -1,
+                false,
+                vim.fn.systemlist("ls -la " .. target)
+              )
+              require("telescope.previewers.utils").highlighter(self.state.bufnr, "bash")
+            end
+          end,
+        }),
+        attach_mappings = function(prompt_bufnr, map)
+          local confirm = function()
+            local selection = require("telescope.actions.state").get_selected_entry()
+            require("telescope.actions").close(prompt_bufnr)
+            if not selection then
+              return
+            end
+
+            local item = selection.value
+            if item.pkg_dir then
+              local target = item.is_global and (item.pkg_dir .. "/share/" .. item.ordinal)
+                or item.pkg_dir
+              Utils.open_directory(target)
+            elseif item.is_global then
+              vim.system({ "ros2", "pkg", "prefix", item.ordinal }, { text = true }, function(out)
+                vim.schedule(function()
+                  if out.code == 0 and out.stdout ~= "" then
+                    local prefix = out.stdout:gsub("%s+", "")
+                    Utils.open_directory(prefix .. "/share/" .. item.ordinal)
+                  end
+                end)
+              end)
+            end
           end
-        end
-        map("i", "<CR>", confirm)
-        map("n", "<CR>", confirm)
-        return true
-      end,
-    })
-    :find()
+          map("i", "<CR>", confirm)
+          map("n", "<CR>", confirm)
+          return true
+        end,
+      })
+      :find()
+  end)
 end
 
 function M.sniper(subdir)

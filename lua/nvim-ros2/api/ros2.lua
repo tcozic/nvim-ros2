@@ -16,6 +16,20 @@ function M.get_command_output(cmd)
   return vim.fn.systemlist(cmd)
 end
 
+-- Add this under "1. CORE EXECUTION" in api/ros2.lua
+--- Fetches all ROS 2 packages known to the environment (local + global)
+function M.get_all_packages(cb)
+  vim.system({ "ros2", "pkg", "list" }, { text = true, timeout = 5000 }, function(out)
+    vim.schedule(function()
+      if out.code ~= 0 or out.stdout == "" then
+        cb({})
+      else
+        cb(vim.split(out.stdout, "\n", { trimempty = true }))
+      end
+    end)
+  end)
+end
+
 --------------------------------------------------------------------------------
 -- 2. NAVIGATION & TOPICS
 --------------------------------------------------------------------------------

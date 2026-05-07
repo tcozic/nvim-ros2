@@ -4,6 +4,11 @@ local defaults = {
   autocmds = true,
   treesitter = true,
   picker = "telescope", -- "telescope", "snacks", "fzf"
+  pickers = {
+    packages = {
+      show_global = true, -- Enable/disable /opt/ros packages
+    },
+  },
   tuner = true, -- New option
   tuner_match_mode = "smart", -- Options: "smart", "simple", "all"
   tuner_open_mode = "split", -- Options: "split", "tab", "hide"

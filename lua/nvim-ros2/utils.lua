@@ -4,7 +4,7 @@ local M = {}
 
 -- Session cache for workspace packages
 local _pkg_cache = {}
-
+local _merged_cache = {} -- [NEW] Independent cache for the async merged list
 -- Auto-invalidate cache if a package.xml is edited/saved
 local cache_group = vim.api.nvim_create_augroup("Ros2UtilsCache", { clear = true })
 vim.api.nvim_create_autocmd("BufWritePost", {
@@ -12,9 +12,9 @@ vim.api.nvim_create_autocmd("BufWritePost", {
   group = cache_group,
   callback = function()
     _pkg_cache = {}
+    _merged_cache = {} -- [FIX] Invalidate merged cache as well
   end,
 })
-
 -- Private Helper: Handles both Buffer IDs and String Paths (like oil://)
 local function get_search_path(target)
   local path = ""
@@ -186,6 +186,104 @@ function M.open_directory(path)
   else
     vim.cmd("Explore " .. vim.fn.fnameescape(path))
   end
+end
+
+--- Asynchronously merges local and global ROS 2 packages into a unified, sorted list.
+function M.get_merged_packages(ws_root, show_global, cb)
+  -- 1. Check Cache
+  local cache_key = (ws_root or "none") .. "_" .. tostring(show_global)
+  if _merged_cache[cache_key] then
+    return cb(_merged_cache[cache_key])
+  end
+
+  -- 2. Fetch Local Packages (Async)
+  local cmd = vim.fn.executable("fd") == 1
+      and {
+        "fd",
+        "-t",
+        "f",
+        "^package.xml$",
+        ws_root,
+        "-E",
+        "build/",
+        "-E",
+        "install/",
+        "-E",
+        "log/",
+      }
+    or {
+      "find",
+      ws_root,
+      "-type",
+      "f",
+      "-name",
+      "package.xml",
+      "-not",
+      "-path",
+      "*/build/*",
+      "-not",
+      "-path",
+      "*/install/*",
+      "-not",
+      "-path",
+      "*/log/*",
+    }
+
+  vim.system(cmd, { text = true }, function(local_out)
+    vim.schedule(function()
+      local local_pkgs = {}
+      if local_out.code == 0 and local_out.stdout ~= "" then
+        for _, xml_path in ipairs(vim.split(local_out.stdout, "\n", { trimempty = true })) do
+          local pkg_dir = vim.fs.dirname(xml_path)
+          local pkg_name = vim.fs.basename(pkg_dir)
+
+          local f = io.open(xml_path, "r")
+          if f then
+            local content = f:read("*a")
+            f:close()
+            pkg_name = content:match("<name>%s*(.-)%s*</name>") or pkg_name
+          end
+
+          local_pkgs[pkg_name] = pkg_dir
+        end
+      end
+
+      local items = {}
+      for pkg_name, pkg_dir in pairs(local_pkgs) do
+        table.insert(items, { text = pkg_name, pkg_dir = pkg_dir, is_global = false, sort_idx = 1 })
+      end
+
+      -- 3. Return early if globals are disabled
+      if not show_global then
+        table.sort(items, function(a, b)
+          return a.text < b.text
+        end)
+        _merged_cache[cache_key] = items
+        return cb(items)
+      end
+
+      -- 4. Fetch Global Packages via API (Async)
+      -- Require locally to prevent circular dependency with api/ros2.lua
+      local RosApi = require("nvim-ros2.api.ros2")
+      RosApi.get_all_packages(function(global_pkgs)
+        for _, pkg_name in ipairs(global_pkgs) do
+          if not local_pkgs[pkg_name] then
+            table.insert(items, { text = pkg_name, pkg_dir = nil, is_global = true, sort_idx = 2 })
+          end
+        end
+
+        table.sort(items, function(a, b)
+          if a.sort_idx ~= b.sort_idx then
+            return a.sort_idx < b.sort_idx
+          end
+          return a.text < b.text
+        end)
+
+        _merged_cache[cache_key] = items
+        cb(items)
+      end)
+    end)
+  end)
 end
 
 return M
