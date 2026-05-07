@@ -297,4 +297,24 @@ function M.get_merged_packages(ws_root, show_global, cb)
   end)
 end
 
+_G._ros2_last_standard_win = _G._ros2_last_standard_win or nil
+local win_track_group = vim.api.nvim_create_augroup("Ros2WindowTracker", { clear = true })
+vim.api.nvim_create_autocmd({ "WinEnter", "BufEnter" }, {
+  group = win_track_group,
+  callback = function()
+    local win = vim.api.nvim_get_current_win()
+    if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_config(win).relative == "" then
+      _G._ros2_last_standard_win = win
+    end
+  end,
+})
+
+--- Safely resolves the correct target window, completely bypassing floating pickers
+function M.get_target_window()
+  if _G._ros2_last_standard_win and vim.api.nvim_win_is_valid(_G._ros2_last_standard_win) then
+    return _G._ros2_last_standard_win
+  end
+  return vim.api.nvim_get_current_win()
+end
+
 return M

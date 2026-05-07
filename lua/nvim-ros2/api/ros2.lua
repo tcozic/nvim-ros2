@@ -98,16 +98,25 @@ function M.listen_topic(topic_name)
   if not topic_name or topic_name == "" then
     return
   end
-
+  local active_win = Utils.get_target_window()
   vim.notify("🎧 Listening to " .. topic_name .. "...", vim.log.levels.INFO)
 
   local scratch = vim.api.nvim_create_buf(false, true)
-  vim.bo[scratch].buftype = "nofile"
+  vim.bo[scratch].buftype = ""
   vim.bo[scratch].bufhidden = "wipe"
   vim.bo[scratch].filetype = "yaml"
-
+  vim.api.nvim_create_autocmd("BufWriteCmd", {
+    buffer = scratch,
+    callback = function()
+      vim.notify("Topic listener is read-only.", vim.log.levels.WARN)
+      vim.bo[scratch].modified = false
+    end,
+  })
   pcall(vim.api.nvim_buf_set_name, scratch, "ROS_LISTEN_" .. topic_name:gsub("/", "_"))
-  vim.cmd("buffer " .. scratch)
+  if vim.api.nvim_win_is_valid(active_win) then
+    vim.api.nvim_set_current_win(active_win)
+  end
+  vim.api.nvim_set_current_buf(scratch)
 
   local msg_accumulator = {}
   local cmd = { "ros2", "topic", "echo", "--no-arr", topic_name }
@@ -141,6 +150,7 @@ function M.listen_topic(topic_name)
         end
 
         vim.bo[scratch].modifiable = false
+        vim.bo[scratch].modified = false
       end)
     end,
     on_stderr = function(_, data, _)
@@ -163,6 +173,7 @@ function M.listen_topic(topic_name)
           vim.api.nvim_buf_set_lines(scratch, -1, -1, false, errs)
         end
         vim.bo[scratch].modifiable = false
+        vim.bo[scratch].modified = false
       end)
     end,
     on_exit = function(_, code)
@@ -180,6 +191,7 @@ function M.listen_topic(topic_name)
             { "", "# Subscriber closed (code " .. code .. ")." }
           )
           vim.bo[scratch].modifiable = false
+          vim.bo[scratch].modified = false
         end
       end)
     end,
@@ -743,7 +755,7 @@ function M.call_rpc(target_category, item_text)
 
   -- Check if type is already embedded from picker payload
   local interface_type = item_text:match("%[(.-)%]")
-
+  local active_win = Utils.get_target_window()
   local function on_type_fetched(itype)
     if not itype then
       vim.notify("Could not determine type for " .. target_name, vim.log.levels.ERROR)
@@ -756,7 +768,7 @@ function M.call_rpc(target_category, item_text)
         proto_yaml = proto_yaml:gsub("^%s*[\"']", ""):gsub("[\"']%s*$", "")
 
         local scratch = vim.api.nvim_create_buf(false, true)
-        vim.bo[scratch].buftype = "acwrite"
+        vim.bo[scratch].buftype = ""
         vim.bo[scratch].bufhidden = "wipe"
         vim.bo[scratch].filetype = "yaml"
         pcall(vim.api.nvim_buf_set_name, scratch, "ROS_CALL_" .. target_name:gsub("/", "_"))
@@ -776,11 +788,16 @@ function M.call_rpc(target_category, item_text)
           "# Commands: :RosRpc send | load [file] | save [file] | stop",
           "---",
         }
+
         for _, line in ipairs(vim.split(proto_yaml, "\n", { trimempty = true })) do
           table.insert(content, (line:gsub('^"', ""):gsub('"$', "")))
         end
         vim.api.nvim_buf_set_lines(scratch, 0, -1, false, content)
-        vim.cmd("buffer " .. scratch)
+
+        if vim.api.nvim_win_is_valid(active_win) then
+          vim.api.nvim_set_current_win(active_win)
+        end
+        vim.api.nvim_set_current_buf(scratch)
 
         -- Register Unified Command
         vim.api.nvim_buf_create_user_command(scratch, "RosRpc", rpc_command_router, {
