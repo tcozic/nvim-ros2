@@ -70,6 +70,17 @@ When opening directories via the **Package Hub** or **Snipers**, the plugin auto
 - [mini.files](https://github.com/echasnovski/mini.files)
 - [neo-tree.nvim](https://github.com/nvim-neo-tree/neo-tree.nvim)
 - [nvim-tree.lua](https://github.com/nvim-tree/nvim-tree.lua)
+
+#### Package Navigation
+
+![packages navigation](./assets/packages_navigation.gif)
+
+#### Interface Jumper
+
+![interfaces goto](./assets/interfaces-goto.gif)
+
+
+
 ### 🚀 The RPC Engine (Services & Actions)
 
 Launch ephemeral, auto-cleaning scratch buffers to execute ROS 2 calls just like Postman or Insomnia. 
@@ -77,6 +88,11 @@ Launch ephemeral, auto-cleaning scratch buffers to execute ROS 2 calls just like
 - **Live Streaming:** Trigger long-running actions. The engine intercepts Python CLI outputs and continuously rewrites the buffer's response section with clean, readable YAML.
 - **Safe Execution:** Stop long-running actions gracefully. Pressing `s` sends a native `SIGINT` (Ctrl-C) to trigger the Action Server's cancellation pipeline.
 - **Payload Management:** Save your YAML payloads to disk. The engine injects interface metadata so the **Smart Load Picker** (`<leader>l`) only displays payloads compatible with the current Service/Action.
+
+#### RPC Tools Demo
+
+![rpc tools](./assets/ros2_rpc_tools.gif)
+
 ### 🎛️ ROS 2 Tuner
 
 A hardware-in-the-loop tuning engine to safely synchronize local parameter files (`.yaml` / `.param`) with live DDS nodes on your robot. 
@@ -87,6 +103,10 @@ A hardware-in-the-loop tuning engine to safely synchronize local parameter files
 - **Crucible Mode (Safe Git Integration):** After experimenting with live values in the Tuning Console, simply save the file (`:w`). Both the console and your original file will enter Neovim's `diffthis` mode side-by-side, allowing you to selectively push (`dp`) your tuned values back to the source code.
 - **Live Event Loop:** Values and boundaries (Ranges) are dynamically fetched as virtual text. Modifying a value in Insert mode safely triggers a `ros2 param set` network call in the background.
 
+#### Smart Attach & Live Tuning
+
+![node tuner](./assets/node_tuner.gif)
+
 ### 🎛️ ROS 2 Tuner Auto-Discovery
 
 To prevent flooding your curated `.yaml` configuration files with ROS 2 systemic and component defaults, the Tuner does not automatically inject missing parameters by default.
@@ -95,6 +115,11 @@ To prevent flooding your curated `.yaml` configuration files with ROS 2 systemic
   * Use `:RosTune resync --pull` (or `<leader>rp`) to explicitly fetch and inject newly discovered parameters.
   * Set `tuner_pull_missing = true` in your `opts` to automatically pull them every time.
 * **Synthetic Proxy Buffers:** When using `:RosTune attach` without a backing file, the Tuner will always pull and display all live parameters regardless of this setting.
+
+#### Missing Parameter Injection
+
+![tuner pull](./assets/tuner_pull.gif)
+
 #### 📊 Statusline Integration
 You can expose the buffer's tuning health (synced, unused, or offline parameters) directly in your statusline (e.g., Lualine):
 ```lua
